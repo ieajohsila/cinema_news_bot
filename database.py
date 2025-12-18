@@ -1,81 +1,73 @@
 import json
 import os
+from datetime import datetime
 
-DB_FILE = "db.json"
+BASE = "data"
+os.makedirs(BASE, exist_ok=True)
 
-def load_db():
-    if not os.path.exists(DB_FILE):
-        return {"rss_sources": [], "scrape_sources": [], "sent_news": [], "settings": {}}
-    with open(DB_FILE, "r", encoding="utf-8") as f:
+FILES = {
+    "settings": f"{BASE}/settings.json",
+    "sources": f"{BASE}/sources.json",
+    "sent": f"{BASE}/sent.json",
+    "topics": f"{BASE}/topics.json"
+}
+
+def _load(name, default):
+    if not os.path.exists(FILES[name]):
+        with open(FILES[name], "w", encoding="utf-8") as f:
+            json.dump(default, f, ensure_ascii=False)
+    with open(FILES[name], encoding="utf-8") as f:
         return json.load(f)
 
-def save_db(data):
-    with open(DB_FILE, "w", encoding="utf-8") as f:
+def _save(name, data):
+    with open(FILES[name], "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-# RSS
-def get_rss_sources():
-    db = load_db()
-    return db.get("rss_sources", [])
-
-def add_rss_source(url):
-    db = load_db()
-    sources = db.get("rss_sources", [])
-    if url not in sources:
-        sources.append(url)
-        db["rss_sources"] = sources
-        save_db(db)
-
-def remove_rss_source(url):
-    db = load_db()
-    sources = db.get("rss_sources", [])
-    if url in sources:
-        sources.remove(url)
-        db["rss_sources"] = sources
-        save_db(db)
-
-# Scraping
-def get_scrape_sources():
-    db = load_db()
-    return db.get("scrape_sources", [])
-
-def add_scrape_source(url):
-    db = load_db()
-    sources = db.get("scrape_sources", [])
-    if url not in sources:
-        sources.append(url)
-        db["scrape_sources"] = sources
-        save_db(db)
-
-def remove_scrape_source(url):
-    db = load_db()
-    sources = db.get("scrape_sources", [])
-    if url in sources:
-        sources.remove(url)
-        db["scrape_sources"] = sources
-        save_db(db)
-
-# Sent news
-def is_sent(news_id):
-    db = load_db()
-    return news_id in db.get("sent_news", [])
-
-def mark_sent(news_id):
-    db = load_db()
-    sent = db.get("sent_news", [])
-    if news_id not in sent:
-        sent.append(news_id)
-    db["sent_news"] = sent
-    save_db(db)
-
-# Settings
+# SETTINGS
 def get_setting(key, default=None):
-    db = load_db()
-    return db.get("settings", {}).get(key, default)
+    s = _load("settings", {})
+    return s.get(key, default)
 
 def set_setting(key, value):
-    db = load_db()
-    settings = db.get("settings", {})
-    settings[key] = value
-    db["settings"] = settings
-    save_db(db)
+    s = _load("settings", {})
+    s[key] = value
+    _save("settings", s)
+
+# SOURCES
+def get_sources():
+    return _load("sources", [])
+
+def add_source(src):
+    data = _load("sources", [])
+    data.append(src)
+    _save("sources", data)
+
+def remove_source(index):
+    data = _load("sources", [])
+    data.pop(index)
+    _save("sources", data)
+
+# SENT
+def is_sent(uid):
+    return uid in _load("sent", [])
+
+def mark_sent(uid):
+    data = _load("sent", [])
+    data.append(uid)
+    _save("sent", data)
+
+# TOPICS (for trends)
+def save_topic(topic, source):
+    data = _load("topics", [])
+    today = datetime.utcnow().date().isoformat()
+    data.append({"topic": topic, "source": source, "date": today})
+    _save("topics", data)
+
+def daily_trends():
+    data = _load("topics", [])
+    today = datetime.utcnow().date().isoformat()
+    count = {}
+    for i in data:
+        if i["date"] == today:
+            count.setdefault(i["topic"], set()).add(i["source"])
+    return [k for k, v in count.items() if len(v) >= 3]
