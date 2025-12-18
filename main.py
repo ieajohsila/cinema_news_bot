@@ -1,112 +1,136 @@
 import os
-import feedparser
-from telegram import Bot
-from datetime import date, datetime, timedelta
-import time
-from threading import Thread
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
+from database import (
+    get_rss_sources, add_rss_source, remove_rss_source,
+    get_scrape_sources, add_scrape_source, remove_scrape_source,
+    is_sent, mark_sent,
+    get_setting, set_setting
+)
 
-from scrapers import extract_article
-from translator import fa
-from importance import classify_importance
-from category import classify_category
-from database import is_sent, mark_sent, get_setting
-from trends import save_topic, daily_trends
-from rss_sources import DEFAULT_RSS_SOURCES
+ADMIN_ID = 81155585  # آیدی عددی شما
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")  # حالا درست کار می‌کنه
-bot = Bot(BOT_TOKEN)
-
-
-def send_news(chat_id, title, summary, image, d, site, link):
-    category = classify_category(title, summary)
-    importance = classify_importance(title, summary)
-    min_level = int(get_setting("min_importance", 1))
-
-    if importance < min_level:
-        return  # فیلتر سطح اهمیت
-
-    caption = (
-        f"{category}\n\n"
-        f"*{fa(title)}*\n\n"
-        f"{fa(summary)}\n\n"
-        f"📅 {d}\n"
-        f"🌐 {site}\n\n"
-        f"🔗 [خبر اصلی]({link})"
+# ---- دستورات ادمین ----
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    keyboard = [
+        [InlineKeyboardButton("➕ افزودن RSS", callback_data="add_rss")],
+        [InlineKeyboardButton("➕ افزودن Scraping", callback_data="add_scrape")],
+        [InlineKeyboardButton("❌ حذف منبع", callback_data="remove_source")],
+        [InlineKeyboardButton("🎯 تنظیم گروه/کانال مقصد", callback_data="set_target")],
+        [InlineKeyboardButton("⚙️ مدیریت اهمیت اخبار", callback_data="set_importance")]
+    ]
+    await update.message.reply_text(
+        "پنل مدیریت ربات خبری:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-    if image:
-        bot.send_photo(chat_id=chat_id, photo=image, caption=caption, parse_mode="Markdown")
-    else:
-        bot.send_message(chat_id=chat_id, text=caption, parse_mode="Markdown")
+# ---- مدیریت اهمیت اخبار ----
+async def set_importance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "لطفاً حداقل سطح اهمیت ارسال خبر را وارد کنید (0 تا 3):"
+    )
+    context.user_data["awaiting_importance"] = True
 
-    mark_sent(link)
-    save_topic(title, site, d)
+async def receive_importance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get("awaiting_importance"):
+        val = update.message.text.strip()
+        if val in ["0", "1", "2", "3"]:
+            set_setting("min_importance", val)
+            await update.message.reply_text(f"حداقل سطح اهمیت روی {val} تنظیم شد.")
+        context.user_data["awaiting_importance"] = False
 
+# ---- تنظیم گروه/کانال مقصد ----
+async def set_target(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "لطفاً آیدی عددی گروه یا کانال مقصد را ارسال کنید (مثلاً: -1001234567890):"
+    )
+    context.user_data["awaiting_target"] = True
 
-def fetch_and_send():
-    chat_id = get_setting("TARGET_CHAT_ID")
-    if not chat_id:
-        print("⚠️ آیدی مقصد تنظیم نشده است.")
+async def receive_target(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get("awaiting_target"):
+        val = update.message.text.strip()
+        set_setting("TARGET_CHAT_ID", val)
+        context.user_data["awaiting_target"] = False
+        await update.message.reply_text(f"گروه/کانال مقصد روی {val} تنظیم شد. ارسال پیام تست...")
+        # پیام تست
+        try:
+            await context.bot.send_message(chat_id=int(val), text="این یک پیام تست از ربات خبری است ✅")
+        except Exception as e:
+            await update.message.reply_text(f"ارسال پیام تست ناموفق بود: {e}")
+
+# ---- حذف منبع ----
+async def remove_source_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    rss = get_rss_sources()
+    scrape = get_scrape_sources()
+    keyboard = []
+
+    for url in rss:
+        keyboard.append([InlineKeyboardButton(f"RSS: {url}", callback_data=f"del_rss|{url}")])
+    for url in scrape:
+        keyboard.append([InlineKeyboardButton(f"Scrape: {url}", callback_data=f"del_scrape|{url}")])
+
+    if not keyboard:
+        await update.message.reply_text("منبعی برای حذف وجود ندارد.")
         return
 
-    for src in RSS_SOURCES:
-        feed = feedparser.parse(src["url"])
-        for entry in feed.entries[:5]:
-            if is_sent(entry.link):
-                continue
-            try:
-                title, summary, image, d, site = extract_article(entry.link)
-                send_news(chat_id, title, summary, image, d, site, entry.link)
-            except Exception as e:
-                print(f"Error processing {entry.link}: {e}")
+    await update.message.reply_text("روی منبعی که می‌خواهید حذف شود کلیک کنید:", reply_markup=InlineKeyboardMarkup(keyboard))
 
+async def remove_source_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    if data.startswith("del_rss|"):
+        url = data.split("|")[1]
+        remove_rss_source(url)
+        await query.edit_message_text(f"منبع RSS حذف شد:\n{url}")
+    elif data.startswith("del_scrape|"):
+        url = data.split("|")[1]
+        remove_scrape_source(url)
+        await query.edit_message_text(f"منبع Scrape حذف شد:\n{url}")
 
-def send_daily_trends():
-    chat_id = get_setting("TARGET_CHAT_ID")
-    today = date.today().isoformat()
-    trends = daily_trends(today)
-    if not trends:
-        return
+# ---- Callback اصلی ----
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.data == "add_rss":
+        await query.message.reply_text("لطفاً آدرس RSS را ارسال کنید:")
+        context.user_data["awaiting_add_rss"] = True
+    elif query.data == "add_scrape":
+        await query.message.reply_text("لطفاً آدرس سایت Scraping را ارسال کنید:")
+        context.user_data["awaiting_add_scrape"] = True
+    elif query.data == "remove_source":
+        await remove_source_menu(update, context)
+    elif query.data == "set_target":
+        await set_target(update, context)
+    elif query.data == "set_importance":
+        await set_importance(update, context)
 
-    msg = "📊 *ترندهای امروز سینما*\n\n"
-    for topic, count in trends:
-        msg += f"🔥 {topic} ({count} منبع)\n"
+# ---- دریافت پیام‌ها برای افزودن منابع ----
+async def receive_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if context.user_data.get("awaiting_add_rss"):
+        add_rss_source(text)
+        await update.message.reply_text(f"RSS اضافه شد:\n{text}")
+        context.user_data["awaiting_add_rss"] = False
+    elif context.user_data.get("awaiting_add_scrape"):
+        add_scrape_source(text)
+        await update.message.reply_text(f"Scraping اضافه شد:\n{text}")
+        context.user_data["awaiting_add_scrape"] = False
+    elif context.user_data.get("awaiting_importance"):
+        await receive_importance(update, context)
+    elif context.user_data.get("awaiting_target"):
+        await receive_target(update, context)
 
-    bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
-
-
-def schedule_news(interval_hours=3):
-    """
-    اجرای دوره‌ای اخبار هر 'interval_hours' ساعت یکبار
-    """
-    while True:
-        print(f"[{datetime.now()}] جمع‌آوری و ارسال اخبار آغاز شد.")
-        fetch_and_send()
-        print(f"[{datetime.now()}] پایان ارسال اخبار. خواب به مدت {interval_hours} ساعت...")
-        time.sleep(interval_hours * 3600)
-
-
-def schedule_daily_trends(hour=23, minute=55):
-    """
-    ارسال ترند روزانه ساعت مشخص (پیش‌فرض 23:55)
-    """
-    while True:
-        now = datetime.now()
-        send_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        if send_time < now:
-            send_time += timedelta(days=1)
-        sleep_seconds = (send_time - now).total_seconds()
-        print(f"[{datetime.now()}] زمان خواب تا ارسال ترند: {sleep_seconds/60:.1f} دقیقه")
-        time.sleep(sleep_seconds)
-        send_daily_trends()
-
-
+# ---- ایجاد اپلیکیشن ----
 if __name__ == "__main__":
-    # اجرای دو Thread همزمان: اخبار دوره‌ای + ترند روزانه
-    Thread(target=schedule_news, args=(3,), daemon=True).start()  # هر 3 ساعت یک‌بار
-    Thread(target=schedule_daily_trends, args=(23,55), daemon=True).start()  # هر روز 23:55
+    BOT_TOKEN = os.getenv("BOT_TOKEN")  # یا قرار بده مستقیم
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    print("ربات شروع شد. CTRL+C برای خروج")
-    while True:
-        time.sleep(60)  # حلقه اصلی برای نگه داشتن Thread ها
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_message))
+    app.add_handler(CallbackQueryHandler(remove_source_callback, pattern=r"del_"))
 
+    app.run_polling()
