@@ -35,6 +35,7 @@ def is_admin(update: Update) -> bool:
 # =========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update):
+        await update.message.reply_text("⛔️ شما دسترسی به این ربات ندارید.")
         return
 
     keyboard = [
@@ -133,12 +134,12 @@ async def remove_source_callback(update: Update, context: ContextTypes.DEFAULT_T
     if data.startswith("del_rss|"):
         url = data.split("|", 1)[1]
         remove_rss_source(url)
-        await query.edit_message_text(f"منبع RSS حذف شد:\n{url}")
+        await query.edit_message_text(f"✅ منبع RSS حذف شد:\n{url}")
 
     elif data.startswith("del_scrape|"):
         url = data.split("|", 1)[1]
         remove_scrape_source(url)
-        await query.edit_message_text(f"منبع Scraping حذف شد:\n{url}")
+        await query.edit_message_text(f"✅ منبع Scraping حذف شد:\n{url}")
 
 
 # =========================
@@ -154,23 +155,23 @@ async def receive_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get("awaiting_add_rss"):
         add_rss_source(text)
         context.user_data.clear()
-        await update.message.reply_text(f"RSS اضافه شد:\n{text}")
+        await update.message.reply_text(f"✅ RSS اضافه شد:\n{text}")
         return
 
     # افزودن Scraping
     if context.user_data.get("awaiting_add_scrape"):
         add_scrape_source(text)
         context.user_data.clear()
-        await update.message.reply_text(f"منبع Scraping اضافه شد:\n{text}")
+        await update.message.reply_text(f"✅ منبع Scraping اضافه شد:\n{text}")
         return
 
     # تنظیم اهمیت
     if context.user_data.get("awaiting_importance"):
         if text in {"0", "1", "2", "3"}:
             set_setting("min_importance", text)
-            await update.message.reply_text(f"حداقل اهمیت روی {text} تنظیم شد.")
+            await update.message.reply_text(f"✅ حداقل اهمیت روی {text} تنظیم شد.")
         else:
-            await update.message.reply_text("عدد نامعتبر است. فقط 0 تا 3.")
+            await update.message.reply_text("❌ عدد نامعتبر است. فقط 0 تا 3 مجاز است.")
         context.user_data.clear()
         return
 
@@ -179,7 +180,7 @@ async def receive_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         set_setting("TARGET_CHAT_ID", text)
         context.user_data.clear()
         await update.message.reply_text(
-            f"مقصد تنظیم شد: {text}\nدر حال ارسال پیام تست..."
+            f"✅ مقصد تنظیم شد: {text}\n📤 در حال ارسال پیام تست..."
         )
 
         try:
@@ -187,25 +188,40 @@ async def receive_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 chat_id=int(text),
                 text="✅ اتصال موفق است. این پیام تست از ربات خبری سینماست.",
             )
+            await update.message.reply_text("✅ پیام تست با موفقیت ارسال شد!")
         except Exception as e:
             await update.message.reply_text(f"❌ ارسال پیام تست ناموفق بود:\n{e}")
         return
 
 
 # =========================
-# اجرای برنامه
+# ساخت Application
 # =========================
-if __name__ == "__main__":
+def create_app():
+    """ساخت و تنظیم Application"""
     BOT_TOKEN = os.getenv("BOT_TOKEN")
     if not BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN در Environment Variables تنظیم نشده است")
+        raise RuntimeError("❌ BOT_TOKEN در Environment Variables تنظیم نشده است")
 
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    application = ApplicationBuilder().token(BOT_TOKEN).build()
 
     # ترتیب بسیار مهم است
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(remove_source_callback, pattern=r"^del_"))
-    app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_message))
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CallbackQueryHandler(remove_source_callback, pattern=r"^del_"))
+    application.add_handler(CallbackQueryHandler(button_handler))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_message))
 
+    return application
+
+
+# برای import کردن در main.py
+app = create_app()
+
+
+# =========================
+# اجرای مستقیم (اگر بخواهید فقط admin_bot اجرا شود)
+# =========================
+if __name__ == "__main__":
+    print("🤖 ربات خبری سینما در حال راه‌اندازی...")
+    print("✅ ربات آماده است و منتظر دریافت پیام...")
     app.run_polling()

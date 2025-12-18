@@ -23,7 +23,7 @@ def _save(name, data):
     with open(FILES[name], "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-# SETTINGS
+# ============ SETTINGS ============
 def get_setting(key, default=None):
     s = _load("settings", {})
     return s.get(key, default)
@@ -33,30 +33,60 @@ def set_setting(key, value):
     s[key] = value
     _save("settings", s)
 
-# SOURCES
+# ============ SOURCES (RSS & Scrape) ============
 def get_sources():
-    return _load("sources", [])
+    """برگرداندن همه منابع"""
+    return _load("sources", {"rss": [], "scrape": []})
 
-def add_source(src):
-    data = _load("sources", [])
-    data.append(src)
-    _save("sources", data)
+def get_rss_sources():
+    """فقط منابع RSS"""
+    data = get_sources()
+    return data.get("rss", [])
 
-def remove_source(index):
-    data = _load("sources", [])
-    data.pop(index)
-    _save("sources", data)
+def get_scrape_sources():
+    """فقط منابع Scrape"""
+    data = get_sources()
+    return data.get("scrape", [])
 
-# SENT
+def add_rss_source(url):
+    """افزودن RSS"""
+    data = get_sources()
+    if url not in data["rss"]:
+        data["rss"].append(url)
+        _save("sources", data)
+
+def add_scrape_source(url):
+    """افزودن Scrape"""
+    data = get_sources()
+    if url not in data["scrape"]:
+        data["scrape"].append(url)
+        _save("sources", data)
+
+def remove_rss_source(url):
+    """حذف RSS"""
+    data = get_sources()
+    if url in data["rss"]:
+        data["rss"].remove(url)
+        _save("sources", data)
+
+def remove_scrape_source(url):
+    """حذف Scrape"""
+    data = get_sources()
+    if url in data["scrape"]:
+        data["scrape"].remove(url)
+        _save("sources", data)
+
+# ============ SENT ============
 def is_sent(uid):
     return uid in _load("sent", [])
 
 def mark_sent(uid):
     data = _load("sent", [])
-    data.append(uid)
-    _save("sent", data)
+    if uid not in data:
+        data.append(uid)
+        _save("sent", data)
 
-# TOPICS (for trends)
+# ============ TOPICS (for trends) ============
 def save_topic(topic, source):
     data = _load("topics", [])
     today = datetime.utcnow().date().isoformat()
