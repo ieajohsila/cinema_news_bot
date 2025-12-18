@@ -1,39 +1,23 @@
-import sqlite3
+import json
+import os
 
-conn = sqlite3.connect("bot.db", check_same_thread=False)
-cur = conn.cursor()
+DB_FILE = "settings.json"
 
-cur.executescript("""
-CREATE TABLE IF NOT EXISTS sent_news (
-    link TEXT PRIMARY KEY
-);
+def load_settings():
+    if not os.path.exists(DB_FILE):
+        return {}
+    with open(DB_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
 
-CREATE TABLE IF NOT EXISTS topics (
-    topic TEXT,
-    source TEXT,
-    date TEXT
-);
-
-CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT
-);
-""")
-conn.commit()
-
-def is_sent(link):
-    cur.execute("SELECT 1 FROM sent_news WHERE link=?", (link,))
-    return cur.fetchone() is not None
-
-def mark_sent(link):
-    cur.execute("INSERT OR IGNORE INTO sent_news VALUES (?)", (link,))
-    conn.commit()
-
-def get_setting(key, default=None):
-    cur.execute("SELECT value FROM settings WHERE key=?", (key,))
-    r = cur.fetchone()
-    return r[0] if r else default
+def save_settings(settings):
+    with open(DB_FILE, "w", encoding="utf-8") as f:
+        json.dump(settings, f, ensure_ascii=False, indent=2)
 
 def set_setting(key, value):
-    cur.execute("REPLACE INTO settings VALUES (?,?)", (key, value))
-    conn.commit()
+    settings = load_settings()
+    settings[key] = value
+    save_settings(settings)
+
+def get_setting(key):
+    settings = load_settings()
+    return settings.get(key)
