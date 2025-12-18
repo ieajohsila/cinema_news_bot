@@ -1,205 +1,174 @@
+import asyncio
 import os
-import feedparser
+from datetime import datetime, time as dtime, timedelta
+import logging
+
 from telegram import Bot
-from datetime import date, datetime, timedelta
-import time
-from threading import Thread
-from scrapers import extract_article
-from translation import translate_title
-from importance import classify_importance
-from category import classify_category
-from database import is_sent, mark_sent, get_setting, get_rss_sources, get_scrape_sources
-from trends import save_topic, daily_trends, normalize
+from telegram.error import TelegramError
+
+from news_fetcher import fetch_all_news
+from news_ranker import rank_news, generate_daily_trend
+from database import get_setting, set_setting
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-bot = Bot(BOT_TOKEN)
+if not BOT_TOKEN:
+    raise RuntimeError("❌ BOT_TOKEN تنظیم نشده است")
+
+bot = Bot(token=BOT_TOKEN)
+
+NEWS_FETCH_INTERVAL_HOURS = 3
+DAILY_TREND_TIME = dtime(23, 55)
 
 
-def send_news(chat_id, title, summary, image, d, site, link):
-    """ارسال یک خبر به کانال/گروه"""
+async def fetch_and_send_news():
+    """هر N ساعت یکبار اخبار جدید را جمع‌آوری و رتبه‌بندی و ارسال می‌کند."""
+    logger.info("⏰ شروع جمع‌آوری اخبار...")
+    
+    # ذخیره زمان شروع
+    start_time = datetime.now()
+    set_setting("last_news_fetch", start_time.isoformat())
+    
+    TARGET_CHAT_ID = get_setting("TARGET_CHAT_ID")
+
+    if not TARGET_CHAT_ID:
+        logger.warning("⚠️  آیدی مقصد تنظیم نشده است. لطفاً از پنل ادمین تنظیم کنید.")
+        return
+
     try:
-        category = classify_category(title, summary)
-        importance = classify_importance(title, summary)
-        min_level = int(get_setting("min_importance", 1))
-        
-        if importance < min_level:
-            print(f"⏭️  خبر فیلتر شد (اهمیت {importance} < {min_level})")
-            return
-        
-        # ترجمه عنوان
-        title_fa = translate_title(title)
-        summary_fa = translate_title(summary[:300])  # محدود کردن طول خلاصه
-        
-        # ساخت کپشن
-        caption = (
-            f"{category}\n\n"
-            f"*{title_fa}*\n\n"
-            f"{summary_fa}\n\n"
-            f"📅 {d}\n"
-            f"🌐 {site}\n\n"
-            f"🔗 [خبر اصلی]({link})"
+        TARGET_CHAT_ID = int(TARGET_CHAT_ID)
+    except ValueError:
+        logger.error("❌ TARGET_CHAT_ID باید یک عدد صحیح باشد.")
+        return
+
+    min_importance_str = get_setting("min_importance") or "1"
+    try:
+        min_importance = int(min_importance_str)
+    except ValueError:
+        min_importance = 1
+
+    all_news = fetch_all_news()
+    ranked = rank_news(all_news, min_importance=min_importance)
+
+    if not ranked:
+        logger.info("📭 خبر جدیدی برای ارسال پیدا نشد.")
+        return
+
+    logger.info(f"📨 در حال ارسال {len(ranked)} خبر به {TARGET_CHAT_ID}...")
+
+    sent_count = 0
+    for item in ranked:
+        msg = (
+            f"📰 *{item['title']}*\n\n"
+            f"{item.get('summary', '')}\n\n"
+            f"🔗 [مطالعه بیشتر]({item['link']})\n"
+            f"⭐️ اهمیت: {item['importance']}/3"
         )
-        
-        # ارسال
-        if image:
-            bot.send_photo(chat_id=chat_id, photo=image, caption=caption, parse_mode="Markdown")
-        else:
-            bot.send_message(chat_id=chat_id, text=caption, parse_mode="Markdown")
-        
-        mark_sent(link)
-        save_topic(normalize(title), site, d)
-        print(f"✅ خبر ارسال شد: {title[:50]}...")
-        
-    except Exception as e:
-        print(f"❌ خطا در ارسال خبر: {e}")
-
-
-def fetch_rss_and_send(chat_id):
-    """دریافت اخبار از منابع RSS"""
-    rss_sources = get_rss_sources()
-    
-    if not rss_sources:
-        print("⚠️  هیچ منبع RSS تعریف نشده است.")
-        return
-    
-    print(f"📰 در حال بررسی {len(rss_sources)} منبع RSS...")
-    
-    for url in rss_sources:
         try:
-            feed = feedparser.parse(url)
-            print(f"🔍 بررسی: {url} ({len(feed.entries)} خبر)")
-            
-            for entry in feed.entries[:5]:  # فقط 5 خبر اول
-                link = entry.get('link', '')
-                
-                if is_sent(link):
-                    continue
-                
-                try:
-                    title, summary, image, d, site = extract_article(link)
-                    send_news(chat_id, title, summary, image, d, site, link)
-                    time.sleep(2)  # تاخیر برای جلوگیری از flood
-                    
-                except Exception as e:
-                    print(f"⚠️  خطا در پردازش {link}: {e}")
-                    
-        except Exception as e:
-            print(f"❌ خطا در خواندن RSS {url}: {e}")
+            await bot.send_message(
+                chat_id=TARGET_CHAT_ID,
+                text=msg,
+                parse_mode="Markdown",
+                disable_web_page_preview=False,
+            )
+            sent_count += 1
+            await asyncio.sleep(2)
+        except TelegramError as e:
+            logger.error(f"خطا در ارسال خبر: {e}")
 
-
-def fetch_scrape_and_send(chat_id):
-    """دریافت اخبار از منابع Scraping"""
-    scrape_sources = get_scrape_sources()
+    logger.info(f"✅ {sent_count} خبر با موفقیت ارسال شد.")
     
-    if not scrape_sources:
-        print("⚠️  هیچ منبع Scraping تعریف نشده است.")
+    # ذخیره زمان ارسال
+    set_setting("last_news_send", datetime.now().isoformat())
+
+
+async def send_daily_trend():
+    """یک بار در روز ترند روزانه سینما را ارسال می‌کند."""
+    logger.info("📊 شروع ارسال ترند روزانه...")
+    
+    TARGET_CHAT_ID = get_setting("TARGET_CHAT_ID")
+
+    if not TARGET_CHAT_ID:
+        logger.warning("⚠️  آیدی مقصد تنظیم نشده است.")
         return
-    
-    print(f"🕷️  در حال بررسی {len(scrape_sources)} منبع Scraping...")
-    
-    for url in scrape_sources:
-        try:
-            if is_sent(url):
-                continue
-            
-            title, summary, image, d, site = extract_article(url)
-            send_news(chat_id, title, summary, image, d, site, url)
-            time.sleep(2)
-            
-        except Exception as e:
-            print(f"❌ خطا در Scraping {url}: {e}")
 
-
-def send_daily_trends():
-    """ارسال ترندهای روزانه"""
-    chat_id = get_setting("TARGET_CHAT_ID")
-    
-    if not chat_id:
-        print("⚠️  آیدی مقصد تنظیم نشده است.")
-        return
-    
-    today = date.today().isoformat()
-    trends = daily_trends(today)
-    
-    if not trends:
-        print("ℹ️  ترندی برای امروز یافت نشد.")
-        return
-    
-    msg = "📊 *ترندهای امروز سینما*\n\n"
-    for topic, count in trends[:10]:  # فقط 10 ترند اول
-        msg += f"🔥 {topic} ({count} منبع)\n"
-    
     try:
-        bot.send_message(chat_id=int(chat_id), text=msg, parse_mode="Markdown")
-        print("✅ ترندهای روزانه ارسال شد.")
-    except Exception as e:
-        print(f"❌ خطا در ارسال ترندها: {e}")
+        TARGET_CHAT_ID = int(TARGET_CHAT_ID)
+    except ValueError:
+        logger.error("❌ TARGET_CHAT_ID باید یک عدد صحیح باشد.")
+        return
+
+    all_news = fetch_all_news()
+    trend_summary = generate_daily_trend(all_news)
+
+    if not trend_summary or trend_summary == "امروز خبر جدیدی نبود.":
+        logger.info("📭 ترند روزانه خالی است، ارسال نشد.")
+        return
+
+    try:
+        await bot.send_message(
+            chat_id=TARGET_CHAT_ID,
+            text=f"📊 *ترند روزانه سینما*\n\n{trend_summary}",
+            parse_mode="Markdown",
+        )
+        logger.info("✅ ترند روزانه ارسال شد.")
+    except TelegramError as e:
+        logger.error(f"خطا در ارسال ترند: {e}")
 
 
-def schedule_news(interval_hours=3):
-    """اجرای دوره‌ای اخبار"""
-    while True:
-        print(f"\n{'='*60}")
-        print(f"⏰ [{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] شروع جمع‌آوری اخبار")
-        print(f"{'='*60}\n")
-        
-        chat_id = get_setting("TARGET_CHAT_ID")
-        
-        if not chat_id:
-            print("⚠️  آیدی مقصد تنظیم نشده است. لطفاً از پنل ادمین تنظیم کنید.")
-        else:
-            fetch_rss_and_send(chat_id)
-            fetch_scrape_and_send(chat_id)
-        
-        print(f"\n{'='*60}")
-        print(f"✅ پایان ارسال اخبار. خواب به مدت {interval_hours} ساعت...")
-        print(f"{'='*60}\n")
-        
-        time.sleep(interval_hours * 3600)
-
-
-def schedule_daily_trends(hour=23, minute=55):
-    """ارسال ترند روزانه در ساعت مشخص"""
+async def schedule_daily_trend():
+    """زمان‌بندی دقیق ارسال ترند روزانه در ساعت مشخص."""
     while True:
         now = datetime.now()
-        send_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        target_time = datetime.combine(now.date(), DAILY_TREND_TIME)
+
+        if now >= target_time:
+            target_time += timedelta(days=1)
+
+        wait_seconds = (target_time - now).total_seconds()
         
-        if send_time < now:
-            send_time += timedelta(days=1)
+        # ذخیره زمان بعدی
+        set_setting("next_trend_time", target_time.isoformat())
         
-        sleep_seconds = (send_time - now).total_seconds()
-        
-        print(f"⏰ زمان باقی‌مانده تا ارسال ترند: {sleep_seconds/3600:.1f} ساعت")
-        time.sleep(sleep_seconds)
-        
-        send_daily_trends()
+        hours_left = wait_seconds / 3600
+        logger.info(f"⏰ زمان باقی‌مانده تا ارسال ترند: {hours_left:.1f} ساعت")
+
+        await asyncio.sleep(wait_seconds)
+        await send_daily_trend()
 
 
-def start_scheduler():
-    """شروع scheduler"""
-    if not BOT_TOKEN:
-        print("❌ BOT_TOKEN تنظیم نشده است!")
-        return
+async def schedule_news_fetching():
+    """زمان‌بندی دوره‌ای دریافت اخبار."""
+    while True:
+        await fetch_and_send_news()
+        
+        # محاسبه زمان بعدی
+        next_fetch = datetime.now() + timedelta(hours=NEWS_FETCH_INTERVAL_HOURS)
+        set_setting("next_news_fetch", next_fetch.isoformat())
+        
+        logger.info(f"⏰ خواب به مدت {NEWS_FETCH_INTERVAL_HOURS} ساعت...")
+        logger.info(f"📅 دریافت بعدی: {next_fetch.strftime('%Y-%m-%d %H:%M')}")
+        
+        await asyncio.sleep(NEWS_FETCH_INTERVAL_HOURS * 3600)
+
+
+async def main():
+    """اجرای همزمان دو وظیفه."""
+    logger.info("🚀 سرویس خبررسانی خودکار سینما راه‌اندازی شد")
+    logger.info(f"⏰ دریافت اخبار: هر {NEWS_FETCH_INTERVAL_HOURS} ساعت")
+    logger.info(f"📊 ارسال ترندها: روزانه ساعت {DAILY_TREND_TIME.strftime('%H:%M')}")
+    logger.info("🛑 برای توقف: CTRL+C")
     
-    print("\n" + "="*60)
-    print("🤖 سرویس خبررسانی خودکار سینما")
-    print("="*60)
-    print(f"⏰ دریافت اخبار: هر 3 ساعت")
-    print(f"📊 ارسال ترندها: روزانه ساعت 23:55")
-    print(f"🛑 برای توقف: CTRL+C")
-    print("="*60 + "\n")
-    
-    # اجرای دو Thread همزمان
-    Thread(target=schedule_news, args=(3,), daemon=True).start()
-    Thread(target=schedule_daily_trends, args=(23, 55), daemon=True).start()
-    
-    # نگه داشتن برنامه
-    try:
-        while True:
-            time.sleep(60)
-    except KeyboardInterrupt:
-        print("\n\n👋 سرویس متوقف شد.")
+    await asyncio.gather(
+        schedule_news_fetching(),
+        schedule_daily_trend(),
+    )
 
 
 if __name__ == "__main__":
-    start_scheduler()
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("\n🛑 سرویس متوقف شد.")
