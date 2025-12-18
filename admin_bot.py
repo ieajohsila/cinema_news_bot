@@ -81,7 +81,11 @@ async def list_sources(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         msg += "🕷️ *Scrape Sources:* هیچ منبعی یافت نشد"
     
-    await update.message.reply_text(msg, parse_mode="Markdown")
+    # ✅ چک کنیم که از callback می‌آید یا از دستور
+    if update.callback_query:
+        await update.callback_query.message.reply_text(msg, parse_mode="Markdown")
+    else:
+        await update.message.reply_text(msg, parse_mode="Markdown")
 
 
 # =========================
@@ -108,7 +112,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_remove_source_menu(query.message)
 
     elif query.data == "list_sources":
-        await list_sources(query, context)
+        await list_sources(update, context)  # ✅ تغییر از query به update
 
     elif query.data == "set_target":
         context.user_data.clear()
@@ -123,8 +127,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             "حداقل سطح اهمیت ارسال خبر را وارد کنید (0 تا 3):"
         )
-
-
 # =========================
 # منوی حذف منبع
 # =========================
