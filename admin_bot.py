@@ -42,6 +42,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("➕ افزودن RSS", callback_data="add_rss")],
         [InlineKeyboardButton("➕ افزودن Scraping", callback_data="add_scrape")],
         [InlineKeyboardButton("❌ حذف منبع", callback_data="remove_source")],
+        [InlineKeyboardButton("📋 نمایش منابع", callback_data="list_sources")],
         [InlineKeyboardButton("🎯 تنظیم گروه/کانال مقصد", callback_data="set_target")],
         [InlineKeyboardButton("⚙️ مدیریت اهمیت اخبار", callback_data="set_importance")],
     ]
@@ -50,6 +51,37 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "پنل مدیریت ربات خبری سینما:",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
+
+
+# =========================
+# نمایش منابع
+# =========================
+async def list_sources(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """نمایش تمام منابع فعال"""
+    if not is_admin(update):
+        return
+    
+    rss = get_rss_sources()
+    scrape = get_scrape_sources()
+    
+    msg = "📋 *منابع فعال:*\n\n"
+    
+    if rss:
+        msg += f"📰 *RSS Sources ({len(rss)}):*\n"
+        for i, url in enumerate(rss, 1):
+            msg += f"{i}. {url}\n"
+        msg += "\n"
+    else:
+        msg += "📰 *RSS Sources:* هیچ منبعی یافت نشد\n\n"
+    
+    if scrape:
+        msg += f"🕷️ *Scrape Sources ({len(scrape)}):*\n"
+        for i, url in enumerate(scrape, 1):
+            msg += f"{i}. {url}\n"
+    else:
+        msg += "🕷️ *Scrape Sources:* هیچ منبعی یافت نشد"
+    
+    await update.message.reply_text(msg, parse_mode="Markdown")
 
 
 # =========================
@@ -74,6 +106,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif query.data == "remove_source":
         await show_remove_source_menu(query.message)
+
+    elif query.data == "list_sources":
+        await list_sources(query, context)
 
     elif query.data == "set_target":
         context.user_data.clear()
@@ -100,17 +135,20 @@ async def show_remove_source_menu(message):
     keyboard = []
 
     for url in rss:
+        # محدود کردن طول URL برای دکمه
+        display_url = url[:60] + "..." if len(url) > 60 else url
         keyboard.append(
-            [InlineKeyboardButton(f"🟢 RSS | {url}", callback_data=f"del_rss|{url}")]
+            [InlineKeyboardButton(f"🟢 RSS | {display_url}", callback_data=f"del_rss|{url}")]
         )
 
     for url in scrape:
+        display_url = url[:60] + "..." if len(url) > 60 else url
         keyboard.append(
-            [InlineKeyboardButton(f"🔵 Scrape | {url}", callback_data=f"del_scrape|{url}")]
+            [InlineKeyboardButton(f"🔵 Scrape | {display_url}", callback_data=f"del_scrape|{url}")]
         )
 
     if not keyboard:
-        await message.reply_text("هیچ منبعی برای حذف وجود ندارد.")
+        await message.reply_text("هیچ منبعی برای حذف وجود ندارد.\n\n💡 برای افزودن منبع از دکمه‌های پنل اصلی استفاده کنید.")
         return
 
     await message.reply_text(
@@ -207,6 +245,7 @@ def create_app():
 
     # ترتیب بسیار مهم است
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("sources", list_sources))  # دستور جدید
     application.add_handler(CallbackQueryHandler(remove_source_callback, pattern=r"^del_"))
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_message))

@@ -5,10 +5,11 @@
 
 import os
 from threading import Thread
-from admin_bot import app as admin_app
-from news_scheduler import start_scheduler
 
 def main():
+    from admin_bot import app as admin_app
+    from news_scheduler import start_scheduler
+    
     print("\n" + "="*70)
     print("🎬 ربات خبری سینما - راه‌اندازی کامل")
     print("="*70)
