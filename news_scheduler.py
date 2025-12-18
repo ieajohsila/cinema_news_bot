@@ -1,3 +1,7 @@
+"""
+سرویس خبررسانی خودکار - Scheduler
+"""
+
 import asyncio
 import os
 from datetime import datetime, time as dtime, timedelta
@@ -25,7 +29,9 @@ DAILY_TREND_TIME = dtime(23, 55)
 
 async def fetch_and_send_news():
     """هر N ساعت یکبار اخبار جدید را جمع‌آوری و رتبه‌بندی و ارسال می‌کند."""
+    logger.info("\n" + "="*60)
     logger.info("⏰ شروع جمع‌آوری اخبار...")
+    logger.info("="*60)
     
     # ذخیره زمان شروع
     start_time = datetime.now()
@@ -35,12 +41,14 @@ async def fetch_and_send_news():
 
     if not TARGET_CHAT_ID:
         logger.warning("⚠️  آیدی مقصد تنظیم نشده است. لطفاً از پنل ادمین تنظیم کنید.")
+        logger.info("="*60 + "\n")
         return
 
     try:
         TARGET_CHAT_ID = int(TARGET_CHAT_ID)
     except ValueError:
         logger.error("❌ TARGET_CHAT_ID باید یک عدد صحیح باشد.")
+        logger.info("="*60 + "\n")
         return
 
     min_importance_str = get_setting("min_importance") or "1"
@@ -49,14 +57,23 @@ async def fetch_and_send_news():
     except ValueError:
         min_importance = 1
 
+    # جمع‌آوری اخبار
     all_news = fetch_all_news()
+    
+    if not all_news:
+        logger.info("📭 هیچ خبر جدیدی یافت نشد.")
+        logger.info("="*60 + "\n")
+        return
+    
+    # رتبه‌بندی
     ranked = rank_news(all_news, min_importance=min_importance)
 
     if not ranked:
-        logger.info("📭 خبر جدیدی برای ارسال پیدا نشد.")
+        logger.info(f"📭 هیچ خبری با اهمیت حداقل {min_importance} پیدا نشد.")
+        logger.info("="*60 + "\n")
         return
 
-    logger.info(f"📨 در حال ارسال {len(ranked)} خبر به {TARGET_CHAT_ID}...")
+    logger.info(f"📨 در حال ارسال {len(ranked)} خبر به کانال {TARGET_CHAT_ID}...")
 
     sent_count = 0
     for item in ranked:
@@ -74,48 +91,57 @@ async def fetch_and_send_news():
                 disable_web_page_preview=False,
             )
             sent_count += 1
-            await asyncio.sleep(2)
+            await asyncio.sleep(2)  # تاخیر بین پیام‌ها
         except TelegramError as e:
-            logger.error(f"خطا در ارسال خبر: {e}")
+            logger.error(f"❌ خطا در ارسال خبر: {e}")
 
     logger.info(f"✅ {sent_count} خبر با موفقیت ارسال شد.")
     
     # ذخیره زمان ارسال
     set_setting("last_news_send", datetime.now().isoformat())
+    logger.info("="*60 + "\n")
 
 
 async def send_daily_trend():
     """یک بار در روز ترند روزانه سینما را ارسال می‌کند."""
+    logger.info("\n" + "="*60)
     logger.info("📊 شروع ارسال ترند روزانه...")
+    logger.info("="*60)
     
     TARGET_CHAT_ID = get_setting("TARGET_CHAT_ID")
 
     if not TARGET_CHAT_ID:
         logger.warning("⚠️  آیدی مقصد تنظیم نشده است.")
+        logger.info("="*60 + "\n")
         return
 
     try:
         TARGET_CHAT_ID = int(TARGET_CHAT_ID)
     except ValueError:
         logger.error("❌ TARGET_CHAT_ID باید یک عدد صحیح باشد.")
+        logger.info("="*60 + "\n")
         return
 
+    # دریافت اخبار برای تحلیل
     all_news = fetch_all_news()
     trend_summary = generate_daily_trend(all_news)
 
     if not trend_summary or trend_summary == "امروز خبر جدیدی نبود.":
         logger.info("📭 ترند روزانه خالی است، ارسال نشد.")
+        logger.info("="*60 + "\n")
         return
 
     try:
         await bot.send_message(
             chat_id=TARGET_CHAT_ID,
-            text=f"📊 *ترند روزانه سینما*\n\n{trend_summary}",
+            text=trend_summary,
             parse_mode="Markdown",
         )
         logger.info("✅ ترند روزانه ارسال شد.")
     except TelegramError as e:
-        logger.error(f"خطا در ارسال ترند: {e}")
+        logger.error(f"❌ خطا در ارسال ترند: {e}")
+    
+    logger.info("="*60 + "\n")
 
 
 async def schedule_daily_trend():
@@ -148,18 +174,21 @@ async def schedule_news_fetching():
         next_fetch = datetime.now() + timedelta(hours=NEWS_FETCH_INTERVAL_HOURS)
         set_setting("next_news_fetch", next_fetch.isoformat())
         
-        logger.info(f"⏰ خواب به مدت {NEWS_FETCH_INTERVAL_HOURS} ساعت...")
-        logger.info(f"📅 دریافت بعدی: {next_fetch.strftime('%Y-%m-%d %H:%M')}")
+        logger.info(f"😴 خواب به مدت {NEWS_FETCH_INTERVAL_HOURS} ساعت...")
+        logger.info(f"📅 دریافت بعدی: {next_fetch.strftime('%Y-%m-%d ساعت %H:%M')}\n")
         
         await asyncio.sleep(NEWS_FETCH_INTERVAL_HOURS * 3600)
 
 
-async def main():
+async def run_scheduler():
     """اجرای همزمان دو وظیفه."""
-    logger.info("🚀 سرویس خبررسانی خودکار سینما راه‌اندازی شد")
+    logger.info("\n" + "="*60)
+    logger.info("🤖 سرویس خبررسانی خودکار سینما")
+    logger.info("="*60)
     logger.info(f"⏰ دریافت اخبار: هر {NEWS_FETCH_INTERVAL_HOURS} ساعت")
     logger.info(f"📊 ارسال ترندها: روزانه ساعت {DAILY_TREND_TIME.strftime('%H:%M')}")
     logger.info("🛑 برای توقف: CTRL+C")
+    logger.info("="*60 + "\n")
     
     await asyncio.gather(
         schedule_news_fetching(),
@@ -167,8 +196,16 @@ async def main():
     )
 
 
-if __name__ == "__main__":
+def start_scheduler():
+    """تابع ورودی برای استفاده در Thread - برای main.py"""
     try:
-        asyncio.run(main())
+        asyncio.run(run_scheduler())
     except KeyboardInterrupt:
-        logger.info("\n🛑 سرویس متوقف شد.")
+        logger.info("\n🛑 سرویس scheduler متوقف شد.")
+    except Exception as e:
+        logger.error(f"\n❌ خطا در scheduler: {e}")
+
+
+# اجرای مستقیم
+if __name__ == "__main__":
+    start_scheduler()
