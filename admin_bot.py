@@ -1,73 +1,211 @@
 import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    ApplicationBuilder, CommandHandler,
-    CallbackQueryHandler, MessageHandler, filters, ContextTypes
+    ApplicationBuilder,
+    CommandHandler,
+    CallbackQueryHandler,
+    MessageHandler,
+    ContextTypes,
+    filters,
 )
+
 from database import (
-    add_source, remove_source, get_sources,
-    set_setting
+    get_rss_sources,
+    add_rss_source,
+    remove_rss_source,
+    get_scrape_sources,
+    add_scrape_source,
+    remove_scrape_source,
+    get_setting,
+    set_setting,
 )
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
+ADMIN_ID = 81155585  # آیدی عددی ادمین
 
+
+# =========================
+# ابزار کمکی
+# =========================
+def is_admin(update: Update) -> bool:
+    return update.effective_user and update.effective_user.id == ADMIN_ID
+
+
+# =========================
+# /start — پنل اصلی
+# =========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
+    if not is_admin(update):
         return
-    kb = [
+
+    keyboard = [
         [InlineKeyboardButton("➕ افزودن RSS", callback_data="add_rss")],
-        [InlineKeyboardButton("❌ حذف منبع", callback_data="remove")],
-        [InlineKeyboardButton("🎯 تنظیم مقصد", callback_data="target")],
-        [InlineKeyboardButton("⚙️ حداقل اهمیت", callback_data="importance")]
+        [InlineKeyboardButton("➕ افزودن Scraping", callback_data="add_scrape")],
+        [InlineKeyboardButton("❌ حذف منبع", callback_data="remove_source")],
+        [InlineKeyboardButton("🎯 تنظیم گروه/کانال مقصد", callback_data="set_target")],
+        [InlineKeyboardButton("⚙️ مدیریت اهمیت اخبار", callback_data="set_importance")],
     ]
-    await update.message.reply_text("پنل مدیریت:", reply_markup=InlineKeyboardMarkup(kb))
 
-async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
+    await update.message.reply_text(
+        "پنل مدیریت ربات خبری سینما:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
 
-    if q.data == "add_rss":
-        context.user_data["await_rss"] = True
-        await q.message.reply_text("لینک RSS را ارسال کنید:")
 
-    elif q.data == "remove":
-        sources = get_sources()
-        kb = [[InlineKeyboardButton(s["url"], callback_data=f"rm_{i}")]
-              for i, s in enumerate(sources)]
-        await q.message.reply_text("منبع را انتخاب کنید:", reply_markup=InlineKeyboardMarkup(kb))
+# =========================
+# Callback دکمه‌ها
+# =========================
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
 
-    elif q.data == "target":
-        context.user_data["await_target"] = True
-        await q.message.reply_text("آیدی عددی گروه/کانال:")
+    if not is_admin(update):
+        return
 
-    elif q.data == "importance":
-        context.user_data["await_imp"] = True
-        await q.message.reply_text("حداقل اهمیت (1-3):")
+    if query.data == "add_rss":
+        context.user_data.clear()
+        context.user_data["awaiting_add_rss"] = True
+        await query.message.reply_text("آدرس RSS را ارسال کنید:")
 
-    elif q.data.startswith("rm_"):
-        remove_source(int(q.data.split("_")[1]))
-        await q.message.reply_text("منبع حذف شد.")
+    elif query.data == "add_scrape":
+        context.user_data.clear()
+        context.user_data["awaiting_add_scrape"] = True
+        await query.message.reply_text("آدرس سایت Scraping را ارسال کنید:")
 
-async def receive(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    t = update.message.text.strip()
+    elif query.data == "remove_source":
+        await show_remove_source_menu(query.message)
 
-    if context.user_data.pop("await_rss", False):
-        add_source({"type": "rss", "url": t})
-        await update.message.reply_text("RSS اضافه شد.")
+    elif query.data == "set_target":
+        context.user_data.clear()
+        context.user_data["awaiting_target"] = True
+        await query.message.reply_text(
+            "آیدی عددی گروه یا کانال مقصد را ارسال کنید (مثلاً: -1001234567890):"
+        )
 
-    elif context.user_data.pop("await_target", False):
-        set_setting("TARGET_CHAT_ID", t)
-        await update.message.reply_text("مقصد ذخیره شد. پیام تست ارسال می‌شود.")
-        await update.get_bot().send_message(chat_id=t, text="✅ اتصال برقرار شد")
+    elif query.data == "set_importance":
+        context.user_data.clear()
+        context.user_data["awaiting_importance"] = True
+        await query.message.reply_text(
+            "حداقل سطح اهمیت ارسال خبر را وارد کنید (0 تا 3):"
+        )
 
-    elif context.user_data.pop("await_imp", False):
-        set_setting("MIN_IMPORTANCE", int(t))
-        await update.message.reply_text("حداقل اهمیت ذخیره شد.")
 
-app = ApplicationBuilder().token(BOT_TOKEN).build()
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CallbackQueryHandler(menu))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive))
+# =========================
+# منوی حذف منبع
+# =========================
+async def show_remove_source_menu(message):
+    rss = get_rss_sources()
+    scrape = get_scrape_sources()
 
-app.run_polling()
+    keyboard = []
+
+    for url in rss:
+        keyboard.append(
+            [InlineKeyboardButton(f"🟢 RSS | {url}", callback_data=f"del_rss|{url}")]
+        )
+
+    for url in scrape:
+        keyboard.append(
+            [InlineKeyboardButton(f"🔵 Scrape | {url}", callback_data=f"del_scrape|{url}")]
+        )
+
+    if not keyboard:
+        await message.reply_text("هیچ منبعی برای حذف وجود ندارد.")
+        return
+
+    await message.reply_text(
+        "روی منبع موردنظر برای حذف کلیک کنید:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+# =========================
+# حذف منبع (Callback خاص)
+# =========================
+async def remove_source_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if not is_admin(update):
+        return
+
+    data = query.data
+
+    if data.startswith("del_rss|"):
+        url = data.split("|", 1)[1]
+        remove_rss_source(url)
+        await query.edit_message_text(f"منبع RSS حذف شد:\n{url}")
+
+    elif data.startswith("del_scrape|"):
+        url = data.split("|", 1)[1]
+        remove_scrape_source(url)
+        await query.edit_message_text(f"منبع Scraping حذف شد:\n{url}")
+
+
+# =========================
+# دریافت پیام‌های متنی ادمین
+# =========================
+async def receive_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update):
+        return
+
+    text = update.message.text.strip()
+
+    # افزودن RSS
+    if context.user_data.get("awaiting_add_rss"):
+        add_rss_source(text)
+        context.user_data.clear()
+        await update.message.reply_text(f"RSS اضافه شد:\n{text}")
+        return
+
+    # افزودن Scraping
+    if context.user_data.get("awaiting_add_scrape"):
+        add_scrape_source(text)
+        context.user_data.clear()
+        await update.message.reply_text(f"منبع Scraping اضافه شد:\n{text}")
+        return
+
+    # تنظیم اهمیت
+    if context.user_data.get("awaiting_importance"):
+        if text in {"0", "1", "2", "3"}:
+            set_setting("min_importance", text)
+            await update.message.reply_text(f"حداقل اهمیت روی {text} تنظیم شد.")
+        else:
+            await update.message.reply_text("عدد نامعتبر است. فقط 0 تا 3.")
+        context.user_data.clear()
+        return
+
+    # تنظیم مقصد
+    if context.user_data.get("awaiting_target"):
+        set_setting("TARGET_CHAT_ID", text)
+        context.user_data.clear()
+        await update.message.reply_text(
+            f"مقصد تنظیم شد: {text}\nدر حال ارسال پیام تست..."
+        )
+
+        try:
+            await context.bot.send_message(
+                chat_id=int(text),
+                text="✅ اتصال موفق است. این پیام تست از ربات خبری سینماست.",
+            )
+        except Exception as e:
+            await update.message.reply_text(f"❌ ارسال پیام تست ناموفق بود:\n{e}")
+        return
+
+
+# =========================
+# اجرای برنامه
+# =========================
+if __name__ == "__main__":
+    BOT_TOKEN = os.getenv("BOT_TOKEN")
+    if not BOT_TOKEN:
+        raise RuntimeError("BOT_TOKEN در Environment Variables تنظیم نشده است")
+
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    # ترتیب بسیار مهم است
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(remove_source_callback, pattern=r"^del_"))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_message))
+
+    app.run_polling()
