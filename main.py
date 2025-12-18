@@ -1,4 +1,4 @@
-# main.py
+import os
 import feedparser
 from telegram import Bot
 from datetime import date, datetime, timedelta
@@ -13,8 +13,9 @@ from database import is_sent, mark_sent, get_setting
 from trends import save_topic, daily_trends
 from rss_sources import RSS_SOURCES
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")  # از Environment Variable می‌خواند
+BOT_TOKEN = os.getenv("BOT_TOKEN")  # حالا درست کار می‌کنه
 bot = Bot(BOT_TOKEN)
+
 
 def send_news(chat_id, title, summary, image, d, site, link):
     category = classify_category(title, summary)
