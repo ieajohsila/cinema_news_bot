@@ -1,0 +1,29 @@
+# category.py
+
+CATEGORIES = {
+    "🎬 فیلم": [
+        "film", "movie", "cinema", "director"
+    ],
+    "📺 سریال": [
+        "tv", "series", "episode", "season"
+    ],
+    "🎭 جشنواره و جوایز": [
+        "oscar", "cannes", "festival", "award", "golden globe"
+    ],
+    "👤 بازیگران و عوامل": [
+        "actor", "actress", "director", "producer", "cast"
+    ]
+}
+
+def classify_category(title, summary):
+    """
+    دسته‌بندی خبر بر اساس کلمات کلیدی
+    """
+    text = f"{title} {summary}".lower()
+
+    for category, keywords in CATEGORIES.items():
+        for keyword in keywords:
+            if keyword in text:
+                return category
+    # اگر هیچ کلمه‌ای پیدا نشد، پیش‌فرض فیلم
+    return "🎬 فیلم"
