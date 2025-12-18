@@ -11,7 +11,7 @@ from importance import classify_importance
 from category import classify_category
 from database import is_sent, mark_sent, get_setting
 from trends import save_topic, daily_trends
-from rss_sources import RSS_SOURCES
+from rss_sources import DEFAULT_RSS_SOURCES
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")  # حالا درست کار می‌کنه
 bot = Bot(BOT_TOKEN)
@@ -109,3 +109,4 @@ if __name__ == "__main__":
     print("ربات شروع شد. CTRL+C برای خروج")
     while True:
         time.sleep(60)  # حلقه اصلی برای نگه داشتن Thread ها
+
