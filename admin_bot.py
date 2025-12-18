@@ -1,10 +1,24 @@
 # admin_bot.py
+import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    CallbackQueryHandler,
+    filters,
+    ContextTypes,
+)
 from database import set_setting, get_setting
 
+# ---------- تنظیمات ----------
 ADMIN_ID = 81155585  # آیدی عددی شما
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
+if not BOT_TOKEN:
+    raise ValueError("توکن ربات پیدا نشد! لطفاً BOT_TOKEN را در Environment Variables تنظیم کنید.")
+
+# ---------- دستورات ربات ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -20,7 +34,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-# مدیریت اهمیت اخبار
+# ---------- مدیریت اهمیت اخبار ----------
 async def set_importance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "لطفاً حداقل سطح اهمیت ارسال خبر را وارد کنید (0 تا 3):"
@@ -32,12 +46,10 @@ async def receive_importance(update: Update, context: ContextTypes.DEFAULT_TYPE)
         val = update.message.text.strip()
         if val in ["0", "1", "2", "3"]:
             set_setting("min_importance", val)
-            await update.message.reply_text(
-                f"حداقل سطح اهمیت روی {val} تنظیم شد."
-            )
+            await update.message.reply_text(f"حداقل سطح اهمیت روی {val} تنظیم شد.")
         context.user_data["awaiting_importance"] = False
 
-# تنظیم گروه/کانال مقصد
+# ---------- تنظیم گروه/کانال مقصد ----------
 async def set_target(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "لطفاً آیدی عددی گروه یا کانال مقصد را ارسال کنید (مثلاً: -1001234567890):"
@@ -51,15 +63,17 @@ async def receive_target(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"گروه/کانال مقصد روی {val} تنظیم شد.")
         context.user_data["awaiting_target"] = False
 
-# ایجاد اپلیکیشن و هَندلرها
+# ---------- ایجاد اپلیکیشن ----------
 if __name__ == "__main__":
-    app = ApplicationBuilder().token("BOT_TOKEN").build()
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
+    # هَندلرها
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("set_importance", set_importance))
     app.add_handler(CommandHandler("set_target", set_target))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_importance))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_target))
 
+    # اجرا
+    print("ربات با موفقیت شروع شد...")
     app.run_polling()
-
