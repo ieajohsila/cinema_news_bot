@@ -40,5 +40,6 @@ def daily_trends(date):
         counter.setdefault(key, set()).add(item["source"])
 
     # فقط موضوعاتی که از حداقل 2 منبع آمده باشند
-    result = [(topic, len(sources)) for topic, sources in counter.items() if len(sources) >= 2]
+    result = [(topic, len(sources)) for topic, sources in counter.items() if len(sources) >= 3]
     return result
+
