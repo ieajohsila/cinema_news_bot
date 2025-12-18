@@ -1,4 +1,5 @@
 # admin_bot.py
+import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, CallbackQueryHandler,
@@ -74,7 +75,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ---------- اجرای بات ----------
 if __name__ == "__main__":
-    BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"  # توکن بات خود را وارد کنید
+    BOT_TOKEN = os.getenv("BOT_TOKEN")
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     # هَندلرها
