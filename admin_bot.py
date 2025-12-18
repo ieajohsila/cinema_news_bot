@@ -53,7 +53,7 @@ async def receive_target(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ایجاد اپلیکیشن و هَندلرها
 if __name__ == "__main__":
-    app = ApplicationBuilder().token("YOUR_BOT_TOKEN").build()
+    app = ApplicationBuilder().token("BOT_TOKEN").build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("set_importance", set_importance))
@@ -62,3 +62,4 @@ if __name__ == "__main__":
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_target))
 
     app.run_polling()
+
