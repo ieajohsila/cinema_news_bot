@@ -8,10 +8,12 @@ from datetime import datetime, time as dtime, timedelta
 import logging
 
 from telegram import Bot
-from telegram.error import TelegramError
+from telegram.error import TelegramError, RetryAfter
 
 from news_fetcher import fetch_all_news
 from news_ranker import rank_news, generate_daily_trend
+from translation import translate_title
+from category import classify_category
 from database import get_setting, set_setting
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -77,12 +79,30 @@ async def fetch_and_send_news():
 
     sent_count = 0
     for item in ranked:
+        # ترجمه عنوان و خلاصه
+        title_fa = translate_title(item['title'])
+        summary_fa = translate_title(item.get('summary', '')[:300]) if item.get('summary') else ""
+        
+        # دسته‌بندی
+        category = classify_category(item['title'], item.get('summary', ''))
+        
+        # ایموجی اهمیت
+        importance_emoji = {
+            3: "🔥🔥🔥",
+            2: "⭐⭐",
+            1: "⭐",
+            0: "•"
+        }.get(item.get('importance', 1), "⭐")
+        
+        # ساخت پیام
         msg = (
-            f"📰 *{item['title']}*\n\n"
-            f"{item.get('summary', '')}\n\n"
-            f"🔗 [مطالعه بیشتر]({item['link']})\n"
-            f"⭐️ اهمیت: {item['importance']}/3"
+            f"{category}\n\n"
+            f"*{title_fa}*\n\n"
+            f"{summary_fa}\n\n"
+            f"🔗 [خبر اصلی]({item['link']})\n"
+            f"{importance_emoji} اهمیت: {item.get('importance', 1)}/3"
         )
+        
         try:
             await bot.send_message(
                 chat_id=TARGET_CHAT_ID,
@@ -91,7 +111,26 @@ async def fetch_and_send_news():
                 disable_web_page_preview=False,
             )
             sent_count += 1
-            await asyncio.sleep(2)  # تاخیر بین پیام‌ها
+            logger.info(f"✅ ارسال شد: {title_fa[:40]}...")
+            await asyncio.sleep(3)  # تاخیر برای جلوگیری از Flood
+            
+        except RetryAfter as e:
+            logger.warning(f"⏱️  Flood control: صبر {e.retry_after} ثانیه...")
+            await asyncio.sleep(e.retry_after + 1)
+            
+            # تلاش مجدد
+            try:
+                await bot.send_message(
+                    chat_id=TARGET_CHAT_ID,
+                    text=msg,
+                    parse_mode="Markdown",
+                    disable_web_page_preview=False,
+                )
+                sent_count += 1
+                logger.info(f"✅ ارسال شد (تلاش دوم): {title_fa[:40]}...")
+            except Exception as e2:
+                logger.error(f"❌ خطا در تلاش دوم: {e2}")
+                
         except TelegramError as e:
             logger.error(f"❌ خطا در ارسال خبر: {e}")
 
