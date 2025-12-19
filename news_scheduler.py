@@ -1,10 +1,12 @@
 """
 سرویس خبررسانی خودکار - Scheduler
+با پشتیبانی از Timezone تهران
 """
 
 import asyncio
 import os
 from datetime import datetime, time as dtime, timedelta
+import pytz
 import logging
 
 from telegram import Bot
@@ -26,6 +28,14 @@ if not BOT_TOKEN:
 
 bot = Bot(token=BOT_TOKEN)
 
+# Timezone تهران
+TEHRAN_TZ = pytz.timezone('Asia/Tehran')
+
+
+def now_tehran():
+    """دریافت زمان فعلی تهران"""
+    return datetime.now(TEHRAN_TZ)
+
 
 def get_fetch_interval():
     """دریافت بازه جمع‌آوری از تنظیمات (پیش‌فرض 3 ساعت)"""
@@ -33,7 +43,7 @@ def get_fetch_interval():
 
 
 def get_trend_time():
-    """دریافت زمان ارسال ترند (پیش‌فرض 23:55)"""
+    """دریافت زمان ارسال ترند (پیش‌فرض 23:55 به وقت تهران)"""
     trend_hour = int(get_setting("trend_hour", 23))
     trend_minute = int(get_setting("trend_minute", 55))
     return dtime(trend_hour, trend_minute)
@@ -48,10 +58,11 @@ async def fetch_and_send_news():
     """هر N ساعت یکبار اخبار جدید را جمع‌آوری و رتبه‌بندی و ارسال می‌کند."""
     logger.info("\n" + "="*60)
     logger.info("⏰ شروع جمع‌آوری اخبار...")
+    logger.info(f"🕐 زمان تهران: {now_tehran().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info("="*60)
     
     # ذخیره زمان شروع
-    start_time = datetime.now()
+    start_time = now_tehran()
     set_setting("last_news_fetch", start_time.isoformat())
     
     TARGET_CHAT_ID = get_setting("TARGET_CHAT_ID")
@@ -93,7 +104,7 @@ async def fetch_and_send_news():
     logger.info(f"📨 در حال ارسال {len(ranked)} خبر به کانال {TARGET_CHAT_ID}...")
 
     sent_count = 0
-    today = datetime.now().date().isoformat()
+    today = now_tehran().date().isoformat()
     
     for item in ranked:
         # ترجمه عنوان و خلاصه
@@ -168,7 +179,7 @@ async def fetch_and_send_news():
     logger.info(f"✅ {sent_count} خبر با موفقیت ارسال شد.")
     
     # ذخیره زمان ارسال
-    set_setting("last_news_send", datetime.now().isoformat())
+    set_setting("last_news_send", now_tehran().isoformat())
     logger.info("="*60 + "\n")
 
 
@@ -176,6 +187,7 @@ async def send_daily_trend():
     """یک بار در روز ترند روزانه سینما را ارسال می‌کند."""
     logger.info("\n" + "="*60)
     logger.info("📊 شروع ارسال ترند روزانه...")
+    logger.info(f"🕐 زمان تهران: {now_tehran().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info("="*60)
     
     TARGET_CHAT_ID = get_setting("TARGET_CHAT_ID")
@@ -195,8 +207,8 @@ async def send_daily_trend():
     # دریافت حداقل منابع از تنظیمات
     min_sources = get_min_trend_sources()
     
-    # تاریخ امروز
-    today = datetime.now().date().isoformat()
+    # تاریخ امروز به وقت تهران
+    today = now_tehran().date().isoformat()
     
     # ساخت پیام ترند
     trend_message = format_trend_message(today, min_sources=min_sources)
@@ -214,7 +226,7 @@ async def send_daily_trend():
             disable_web_page_preview=True,
         )
         logger.info("✅ ترند روزانه ارسال شد.")
-        set_setting("last_trend_send", datetime.now().isoformat())
+        set_setting("last_trend_send", now_tehran().isoformat())
     except TelegramError as e:
         logger.error(f"❌ خطا در ارسال ترند: {e}")
     
@@ -222,13 +234,18 @@ async def send_daily_trend():
 
 
 async def schedule_daily_trend():
-    """زمان‌بندی دقیق ارسال ترند روزانه در ساعت مشخص."""
+    """زمان‌بندی دقیق ارسال ترند روزانه در ساعت مشخص (به وقت تهران)."""
     while True:
         trend_time = get_trend_time()
-        now = datetime.now()
-        target_time = datetime.combine(now.date(), trend_time)
+        now = now_tehran()
+        
+        # ساخت datetime با timezone تهران
+        target_time = TEHRAN_TZ.localize(
+            datetime.combine(now.date(), trend_time)
+        )
 
         if now >= target_time:
+            # اگر زمان گذشته، برای فردا تنظیم کن
             target_time += timedelta(days=1)
 
         wait_seconds = (target_time - now).total_seconds()
@@ -238,6 +255,7 @@ async def schedule_daily_trend():
         
         hours_left = wait_seconds / 3600
         logger.info(f"⏰ زمان باقی‌مانده تا ارسال ترند: {hours_left:.1f} ساعت")
+        logger.info(f"📅 ترند بعدی: {target_time.strftime('%Y-%m-%d %H:%M')} (تهران)")
 
         await asyncio.sleep(wait_seconds)
         await send_daily_trend()
@@ -251,12 +269,12 @@ async def schedule_news_fetching():
         # دریافت بازه از تنظیمات
         interval_hours = get_fetch_interval()
         
-        # محاسبه زمان بعدی
-        next_fetch = datetime.now() + timedelta(hours=interval_hours)
+        # محاسبه زمان بعدی (به وقت تهران)
+        next_fetch = now_tehran() + timedelta(hours=interval_hours)
         set_setting("next_news_fetch", next_fetch.isoformat())
         
         logger.info(f"😴 خواب به مدت {interval_hours} ساعت...")
-        logger.info(f"📅 دریافت بعدی: {next_fetch.strftime('%Y-%m-%d ساعت %H:%M')}\n")
+        logger.info(f"📅 دریافت بعدی: {next_fetch.strftime('%Y-%m-%d %H:%M')} (تهران)\n")
         
         await asyncio.sleep(interval_hours * 3600)
 
@@ -265,13 +283,15 @@ async def run_scheduler():
     """اجرای همزمان دو وظیفه."""
     logger.info("\n" + "="*60)
     logger.info("🤖 سرویس خبررسانی خودکار سینما")
+    logger.info(f"🌍 Timezone: تهران (UTC+3:30)")
+    logger.info(f"🕐 زمان فعلی: {now_tehran().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info("="*60)
     
     interval_hours = get_fetch_interval()
     trend_time = get_trend_time()
     
     logger.info(f"⏰ دریافت اخبار: هر {interval_hours} ساعت")
-    logger.info(f"📊 ارسال ترندها: روزانه ساعت {trend_time.strftime('%H:%M')}")
+    logger.info(f"📊 ارسال ترندها: روزانه ساعت {trend_time.strftime('%H:%M')} (تهران)")
     logger.info("🛑 برای توقف: CTRL+C")
     logger.info("="*60 + "\n")
     
