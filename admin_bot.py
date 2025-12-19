@@ -38,15 +38,9 @@ def is_admin(update: Update) -> bool:
     return update.effective_user and update.effective_user.id == ADMIN_ID
 
 
-# =========================
-# /start — پنل اصلی
-# =========================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update):
-        await update.message.reply_text("⛔️ شما دسترسی به این ربات ندارید.")
-        return
-
-    keyboard = [
+def get_main_menu_keyboard():
+    """دریافت کیبورد منوی اصلی"""
+    return [
         [InlineKeyboardButton("📊 وضعیت ربات", callback_data="status")],
         [InlineKeyboardButton("📋 نمایش منابع", callback_data="list_sources")],
         [
@@ -60,11 +54,40 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("⏰ تنظیمات زمان‌بندی", callback_data="scheduling_settings")],
     ]
 
+
+# =========================
+# /start — پنل اصلی
+# =========================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update):
+        await update.message.reply_text("⛔️ شما دسترسی به این ربات ندارید.")
+        return
+
+    keyboard = get_main_menu_keyboard()
+
     await update.message.reply_text(
         "🎬 *پنل مدیریت ربات خبری سینما*",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown"
     )
+
+
+async def show_main_menu(query):
+    """نمایش منوی اصلی از callback"""
+    keyboard = get_main_menu_keyboard()
+    
+    try:
+        await query.edit_message_text(
+            "🎬 *پنل مدیریت ربات خبری سینما*",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+    except:
+        await query.message.reply_text(
+            "🎬 *پنل مدیریت ربات خبری سینما*",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
 
 
 # =========================
@@ -109,6 +132,8 @@ async def show_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =========================
 async def list_sources(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """نمایش تمام منابع فعال"""
+    query = update.callback_query if hasattr(update, 'callback_query') else None
+    
     if not is_admin(update):
         return
     
@@ -132,13 +157,33 @@ async def list_sources(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         msg += "🕷️ *Scrape Sources:* هیچ منبعی یافت نشد"
     
-    await update.message.reply_text(msg, parse_mode="Markdown")
+    keyboard = [[InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_main")]]
+    
+    if query:
+        try:
+            await query.edit_message_text(
+                msg, 
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown"
+            )
+        except:
+            await query.message.reply_text(
+                msg,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown"
+            )
+    else:
+        await update.message.reply_text(
+            msg,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
 
 
 # =========================
 # تنظیمات زمان‌بندی
 # =========================
-async def scheduling_settings_menu(message):
+async def scheduling_settings_menu(query):
     """منوی تنظیمات زمان‌بندی"""
     fetch_interval = get_setting("news_fetch_interval_hours", 3)
     trend_hour = get_setting("trend_hour", 23)
@@ -160,17 +205,24 @@ async def scheduling_settings_menu(message):
         [InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_main")]
     ]
     
-    await message.reply_text(
-        msg,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown"
-    )
+    try:
+        await query.edit_message_text(
+            msg,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+    except:
+        await query.message.reply_text(
+            msg,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
 
 
 # =========================
 # مدیریت کلمات کلیدی
 # =========================
-async def manage_keywords_menu(message):
+async def manage_keywords_menu(query):
     """منوی مدیریت کلمات کلیدی"""
     rules = get_all_rules()
     
@@ -187,12 +239,23 @@ async def manage_keywords_menu(message):
     keyboard.append([InlineKeyboardButton("➕ افزودن سطح جدید", callback_data="add_new_level")])
     keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_main")])
     
-    await message.reply_text(
+    msg = (
         "🔧 *مدیریت کلمات کلیدی اهمیت*\n\n"
-        "روی هر سطح کلیک کنید تا کلمات آن را ببینید:",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown"
+        "روی هر سطح کلیک کنید تا کلمات آن را ببینید:"
     )
+    
+    try:
+        await query.edit_message_text(
+            msg,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+    except:
+        await query.message.reply_text(
+            msg,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
 
 
 async def show_level_keywords(query, level):
@@ -206,7 +269,6 @@ async def show_level_keywords(query, level):
     
     if keywords:
         msg += "*کلمات کلیدی:*\n"
-        # نمایش در چند ستون
         for i in range(0, len(keywords), 3):
             row = keywords[i:i+3]
             msg += "• " + " • ".join(row) + "\n"
@@ -227,6 +289,44 @@ async def show_level_keywords(query, level):
 
 
 # =========================
+# منوی حذف منبع
+# =========================
+async def show_remove_source_menu(query):
+    """منوی حذف منابع"""
+    rss = get_rss_sources()
+    scrape = get_scrape_sources()
+
+    keyboard = []
+    for url in rss:
+        display_url = url[:50] + "..." if len(url) > 50 else url
+        keyboard.append([InlineKeyboardButton(f"🟢 RSS | {display_url}", callback_data=f"del_rss|{url}")])
+
+    for url in scrape:
+        display_url = url[:50] + "..." if len(url) > 50 else url
+        keyboard.append([InlineKeyboardButton(f"🔵 Scrape | {display_url}", callback_data=f"del_scrape|{url}")])
+
+    keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_main")])
+
+    if len(keyboard) == 1:  # فقط دکمه بازگشت
+        msg = "❌ هیچ منبعی برای حذف وجود ندارد."
+    else:
+        msg = "❌ *حذف منبع*\n\nروی منبع موردنظر کلیک کنید:"
+    
+    try:
+        await query.edit_message_text(
+            msg,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+    except:
+        await query.message.reply_text(
+            msg,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+
+
+# =========================
 # Callback دکمه‌ها
 # =========================
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -238,8 +338,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data = query.data
 
+    # بازگشت به منوی اصلی
+    if data == "back_to_main":
+        await show_main_menu(query)
+        return
+
     # وضعیت
-    if data == "status":
+    elif data == "status":
         await show_status(update, context)
 
     # منابع
@@ -254,10 +359,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("🕷️ آدرس سایت Scraping را ارسال کنید:")
 
     elif data == "remove_source":
-        await show_remove_source_menu(query.message)
+        await show_remove_source_menu(query)
 
     elif data == "list_sources":
-        await list_sources(query, context)
+        await list_sources(update, context)
 
     # تنظیمات
     elif data == "set_target":
@@ -281,7 +386,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # زمان‌بندی
     elif data == "scheduling_settings":
-        await scheduling_settings_menu(query.message)
+        await scheduling_settings_menu(query)
 
     elif data == "set_fetch_interval":
         context.user_data.clear()
@@ -320,7 +425,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # کلمات کلیدی
     elif data == "manage_keywords":
-        await manage_keywords_menu(query.message)
+        await manage_keywords_menu(query)
 
     elif data.startswith("keywords_level|"):
         level = data.split("|")[1]
@@ -342,11 +447,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keywords = get_level_keywords(int(level))
         
         if not keywords:
-            await query.message.reply_text("❌ هیچ کلمه‌ای برای حذف وجود ندارد.")
+            await query.answer("❌ هیچ کلمه‌ای وجود ندارد")
             return
         
         keyboard = []
-        for kw in keywords:
+        for kw in keywords[:20]:  # محدود به 20 کلمه اول
             keyboard.append([
                 InlineKeyboardButton(
                     f"❌ {kw}",
@@ -355,7 +460,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ])
         keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data=f"keywords_level|{level}")])
         
-        await query.message.reply_text(
+        await query.edit_message_text(
             f"➖ کلمه موردنظر برای حذف از سطح {level} را انتخاب کنید:",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
@@ -363,13 +468,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("del_keyword|"):
         parts = data.split("|")
         level = parts[1]
-        keyword = "|".join(parts[2:])  # برای کلماتی که خودشان | دارند
+        keyword = "|".join(parts[2:])
         
         if remove_keyword(int(level), keyword):
-            await query.answer(f"✅ کلمه '{keyword}' حذف شد")
+            await query.answer(f"✅ کلمه '{keyword}' حذف شد", show_alert=True)
             await show_level_keywords(query, level)
         else:
-            await query.answer("❌ خطا در حذف کلمه")
+            await query.answer("❌ خطا در حذف کلمه", show_alert=True)
 
     elif data == "add_new_level":
         context.user_data.clear()
@@ -380,33 +485,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
 
-    elif data == "back_to_main":
-        await start(query, context)
-
-# =========================
-# منوی حذف منبع
-# =========================
-async def show_remove_source_menu(message):
-    rss = get_rss_sources()
-    scrape = get_scrape_sources()
-
-    keyboard = []
-    for url in rss:
-        display_url = url[:60] + "..." if len(url) > 60 else url
-        keyboard.append([InlineKeyboardButton(f"🟢 RSS | {display_url}", callback_data=f"del_rss|{url}")])
-
-    for url in scrape:
-        display_url = url[:60] + "..." if len(url) > 60 else url
-        keyboard.append([InlineKeyboardButton(f"🔵 Scrape | {display_url}", callback_data=f"del_scrape|{url}")])
-
-    if not keyboard:
-        await message.reply_text("❌ هیچ منبعی برای حذف وجود ندارد.")
-        return
-
-    await message.reply_text("روی منبع موردنظر برای حذف کلیک کنید:", reply_markup=InlineKeyboardMarkup(keyboard))
-
 
 async def remove_source_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """حذف منبع RSS یا Scraping"""
     query = update.callback_query
     await query.answer()
     
@@ -418,12 +499,14 @@ async def remove_source_callback(update: Update, context: ContextTypes.DEFAULT_T
     if data.startswith("del_rss|"):
         url = data.split("|", 1)[1]
         remove_rss_source(url)
-        await query.edit_message_text(f"✅ منبع RSS حذف شد:\n{url}")
+        await query.answer("✅ منبع RSS حذف شد", show_alert=True)
+        await show_remove_source_menu(query)
 
     elif data.startswith("del_scrape|"):
         url = data.split("|", 1)[1]
         remove_scrape_source(url)
-        await query.edit_message_text(f"✅ منبع Scraping حذف شد:\n{url}")
+        await query.answer("✅ منبع Scraping حذف شد", show_alert=True)
+        await show_remove_source_menu(query)
 
 
 # =========================
@@ -439,14 +522,14 @@ async def receive_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get("awaiting_add_rss"):
         add_rss_source(text)
         context.user_data.clear()
-        await update.message.reply_text(f"✅ RSS اضافه شد:\n{text}")
+        await update.message.reply_text(f"✅ RSS اضافه شد:\n`{text}`", parse_mode="Markdown")
         return
 
     # افزودن Scraping
     if context.user_data.get("awaiting_add_scrape"):
         add_scrape_source(text)
         context.user_data.clear()
-        await update.message.reply_text(f"✅ منبع Scraping اضافه شد:\n{text}")
+        await update.message.reply_text(f"✅ منبع Scraping اضافه شد:\n`{text}`", parse_mode="Markdown")
         return
 
     # تنظیم حداقل اهمیت
@@ -463,10 +546,10 @@ async def receive_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get("awaiting_target"):
         set_setting("TARGET_CHAT_ID", text)
         context.user_data.clear()
-        await update.message.reply_text(f"✅ مقصد تنظیم شد: {text}\n📤 در حال ارسال پیام تست...")
+        await update.message.reply_text(f"✅ مقصد تنظیم شد: `{text}`\n📤 در حال ارسال پیام تست...", parse_mode="Markdown")
 
         try:
-            await context.bot.send_message(chat_id=int(text), text="✅ اتصال موفق است.")
+            await context.bot.send_message(chat_id=int(text), text="✅ اتصال موفق است. این پیام تست از ربات خبری سینماست.")
             await update.message.reply_text("✅ پیام تست با موفقیت ارسال شد!")
         except Exception as e:
             await update.message.reply_text(f"❌ خطا: {e}")
