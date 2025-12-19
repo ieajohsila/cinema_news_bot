@@ -11,9 +11,10 @@ from telegram import Bot
 from telegram.error import TelegramError, RetryAfter
 
 from news_fetcher import fetch_all_news
-from news_ranker import rank_news, generate_daily_trend
+from news_ranker import rank_news
 from translation import translate_title
 from category import classify_category
+from trends import save_topic, format_trend_message
 from database import get_setting, set_setting
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -25,8 +26,22 @@ if not BOT_TOKEN:
 
 bot = Bot(token=BOT_TOKEN)
 
-NEWS_FETCH_INTERVAL_HOURS = 3
-DAILY_TREND_TIME = dtime(23, 55)
+
+def get_fetch_interval():
+    """دریافت بازه جمع‌آوری از تنظیمات (پیش‌فرض 3 ساعت)"""
+    return int(get_setting("news_fetch_interval_hours", 3))
+
+
+def get_trend_time():
+    """دریافت زمان ارسال ترند (پیش‌فرض 23:55)"""
+    trend_hour = int(get_setting("trend_hour", 23))
+    trend_minute = int(get_setting("trend_minute", 55))
+    return dtime(trend_hour, trend_minute)
+
+
+def get_min_trend_sources():
+    """حداقل منابع برای ترند (پیش‌فرض 2)"""
+    return int(get_setting("min_trend_sources", 2))
 
 
 async def fetch_and_send_news():
@@ -78,6 +93,8 @@ async def fetch_and_send_news():
     logger.info(f"📨 در حال ارسال {len(ranked)} خبر به کانال {TARGET_CHAT_ID}...")
 
     sent_count = 0
+    today = datetime.now().date().isoformat()
+    
     for item in ranked:
         # ترجمه عنوان و خلاصه
         title_fa = translate_title(item['title'])
@@ -85,6 +102,10 @@ async def fetch_and_send_news():
         
         # دسته‌بندی
         category = classify_category(item['title'], item.get('summary', ''))
+        
+        # تبدیل دسته به هشتگ قابل جستجو
+        category_hashtag = category.split()[1] if ' ' in category else category
+        category_hashtag = f"#{category_hashtag}"
         
         # ایموجی اهمیت
         importance_emoji = {
@@ -96,7 +117,7 @@ async def fetch_and_send_news():
         
         # ساخت پیام
         msg = (
-            f"{category}\n\n"
+            f"{category} {category_hashtag}\n\n"
             f"*{title_fa}*\n\n"
             f"{summary_fa}\n\n"
             f"🔗 [خبر اصلی]({item['link']})\n"
@@ -111,6 +132,15 @@ async def fetch_and_send_news():
                 disable_web_page_preview=False,
             )
             sent_count += 1
+            
+            # ذخیره برای ترند
+            save_topic(
+                title=item['title'],
+                link=item['link'],
+                source=item.get('source', 'unknown'),
+                date=today
+            )
+            
             logger.info(f"✅ ارسال شد: {title_fa[:40]}...")
             await asyncio.sleep(3)  # تاخیر برای جلوگیری از Flood
             
@@ -127,6 +157,7 @@ async def fetch_and_send_news():
                     disable_web_page_preview=False,
                 )
                 sent_count += 1
+                save_topic(item['title'], item['link'], item.get('source', 'unknown'), today)
                 logger.info(f"✅ ارسال شد (تلاش دوم): {title_fa[:40]}...")
             except Exception as e2:
                 logger.error(f"❌ خطا در تلاش دوم: {e2}")
@@ -161,11 +192,16 @@ async def send_daily_trend():
         logger.info("="*60 + "\n")
         return
 
-    # دریافت اخبار برای تحلیل
-    all_news = fetch_all_news()
-    trend_summary = generate_daily_trend(all_news)
+    # دریافت حداقل منابع از تنظیمات
+    min_sources = get_min_trend_sources()
+    
+    # تاریخ امروز
+    today = datetime.now().date().isoformat()
+    
+    # ساخت پیام ترند
+    trend_message = format_trend_message(today, min_sources=min_sources)
 
-    if not trend_summary or trend_summary == "امروز خبر جدیدی نبود.":
+    if not trend_message:
         logger.info("📭 ترند روزانه خالی است، ارسال نشد.")
         logger.info("="*60 + "\n")
         return
@@ -173,10 +209,12 @@ async def send_daily_trend():
     try:
         await bot.send_message(
             chat_id=TARGET_CHAT_ID,
-            text=trend_summary,
+            text=trend_message,
             parse_mode="Markdown",
+            disable_web_page_preview=True,
         )
         logger.info("✅ ترند روزانه ارسال شد.")
+        set_setting("last_trend_send", datetime.now().isoformat())
     except TelegramError as e:
         logger.error(f"❌ خطا در ارسال ترند: {e}")
     
@@ -186,8 +224,9 @@ async def send_daily_trend():
 async def schedule_daily_trend():
     """زمان‌بندی دقیق ارسال ترند روزانه در ساعت مشخص."""
     while True:
+        trend_time = get_trend_time()
         now = datetime.now()
-        target_time = datetime.combine(now.date(), DAILY_TREND_TIME)
+        target_time = datetime.combine(now.date(), trend_time)
 
         if now >= target_time:
             target_time += timedelta(days=1)
@@ -209,14 +248,17 @@ async def schedule_news_fetching():
     while True:
         await fetch_and_send_news()
         
+        # دریافت بازه از تنظیمات
+        interval_hours = get_fetch_interval()
+        
         # محاسبه زمان بعدی
-        next_fetch = datetime.now() + timedelta(hours=NEWS_FETCH_INTERVAL_HOURS)
+        next_fetch = datetime.now() + timedelta(hours=interval_hours)
         set_setting("next_news_fetch", next_fetch.isoformat())
         
-        logger.info(f"😴 خواب به مدت {NEWS_FETCH_INTERVAL_HOURS} ساعت...")
+        logger.info(f"😴 خواب به مدت {interval_hours} ساعت...")
         logger.info(f"📅 دریافت بعدی: {next_fetch.strftime('%Y-%m-%d ساعت %H:%M')}\n")
         
-        await asyncio.sleep(NEWS_FETCH_INTERVAL_HOURS * 3600)
+        await asyncio.sleep(interval_hours * 3600)
 
 
 async def run_scheduler():
@@ -224,8 +266,12 @@ async def run_scheduler():
     logger.info("\n" + "="*60)
     logger.info("🤖 سرویس خبررسانی خودکار سینما")
     logger.info("="*60)
-    logger.info(f"⏰ دریافت اخبار: هر {NEWS_FETCH_INTERVAL_HOURS} ساعت")
-    logger.info(f"📊 ارسال ترندها: روزانه ساعت {DAILY_TREND_TIME.strftime('%H:%M')}")
+    
+    interval_hours = get_fetch_interval()
+    trend_time = get_trend_time()
+    
+    logger.info(f"⏰ دریافت اخبار: هر {interval_hours} ساعت")
+    logger.info(f"📊 ارسال ترندها: روزانه ساعت {trend_time.strftime('%H:%M')}")
     logger.info("🛑 برای توقف: CTRL+C")
     logger.info("="*60 + "\n")
     

@@ -26,6 +26,7 @@ from importance import (
     remove_keyword,
     add_new_level,
 )
+from status_handler import get_status_message
 
 ADMIN_ID = 81155585  # آیدی عددی ادمین
 
@@ -46,19 +47,61 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     keyboard = [
+        [InlineKeyboardButton("📊 وضعیت ربات", callback_data="status")],
         [InlineKeyboardButton("📋 نمایش منابع", callback_data="list_sources")],
-        [InlineKeyboardButton("➕ افزودن RSS", callback_data="add_rss")],
-        [InlineKeyboardButton("➕ افزودن Scraping", callback_data="add_scrape")],
+        [
+            InlineKeyboardButton("➕ افزودن RSS", callback_data="add_rss"),
+            InlineKeyboardButton("➕ افزودن Scraping", callback_data="add_scrape"),
+        ],
         [InlineKeyboardButton("❌ حذف منبع", callback_data="remove_source")],
         [InlineKeyboardButton("🎯 تنظیم کانال مقصد", callback_data="set_target")],
         [InlineKeyboardButton("⚙️ تنظیم حداقل اهمیت", callback_data="set_min_importance")],
         [InlineKeyboardButton("🔧 مدیریت کلمات کلیدی", callback_data="manage_keywords")],
+        [InlineKeyboardButton("⏰ تنظیمات زمان‌بندی", callback_data="scheduling_settings")],
     ]
 
     await update.message.reply_text(
-        "🎬 پنل مدیریت ربات خبری سینما:",
+        "🎬 *پنل مدیریت ربات خبری سینما*",
         reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown"
     )
+
+
+# =========================
+# وضعیت ربات
+# =========================
+async def show_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """نمایش وضعیت کامل ربات"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    msg = get_status_message()
+    
+    keyboard = [
+        [InlineKeyboardButton("🔄 بروزرسانی", callback_data="status")],
+        [InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_main")]
+    ]
+    
+    if query:
+        try:
+            await query.edit_message_text(
+                msg,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown"
+            )
+        except:
+            await query.message.reply_text(
+                msg,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown"
+            )
+    else:
+        await update.message.reply_text(
+            msg,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
 
 
 # =========================
@@ -77,7 +120,7 @@ async def list_sources(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if rss:
         msg += f"📰 *RSS Sources ({len(rss)}):*\n"
         for i, url in enumerate(rss, 1):
-            msg += f"{i}. {url}\n"
+            msg += f"{i}. `{url}`\n"
         msg += "\n"
     else:
         msg += "📰 *RSS Sources:* هیچ منبعی یافت نشد\n\n"
@@ -85,11 +128,43 @@ async def list_sources(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if scrape:
         msg += f"🕷️ *Scrape Sources ({len(scrape)}):*\n"
         for i, url in enumerate(scrape, 1):
-            msg += f"{i}. {url}\n"
+            msg += f"{i}. `{url}`\n"
     else:
         msg += "🕷️ *Scrape Sources:* هیچ منبعی یافت نشد"
     
     await update.message.reply_text(msg, parse_mode="Markdown")
+
+
+# =========================
+# تنظیمات زمان‌بندی
+# =========================
+async def scheduling_settings_menu(message):
+    """منوی تنظیمات زمان‌بندی"""
+    fetch_interval = get_setting("news_fetch_interval_hours", 3)
+    trend_hour = get_setting("trend_hour", 23)
+    trend_minute = get_setting("trend_minute", 55)
+    min_trend_sources = get_setting("min_trend_sources", 2)
+    
+    msg = (
+        "⏰ *تنظیمات زمان‌بندی*\n\n"
+        f"📰 بازه جمع‌آوری اخبار: هر {fetch_interval} ساعت\n"
+        f"📊 زمان ارسال ترند: {trend_hour:02d}:{trend_minute:02d}\n"
+        f"🔥 حداقل منابع برای ترند: {min_trend_sources}\n\n"
+        "_تنظیمات موردنظر را انتخاب کنید:_"
+    )
+    
+    keyboard = [
+        [InlineKeyboardButton("🔄 تغییر بازه جمع‌آوری", callback_data="set_fetch_interval")],
+        [InlineKeyboardButton("⏱️ تغییر زمان ترند", callback_data="set_trend_time")],
+        [InlineKeyboardButton("📊 تغییر حداقل منابع ترند", callback_data="set_min_trend_sources")],
+        [InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_main")]
+    ]
+    
+    await message.reply_text(
+        msg,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown"
+    )
 
 
 # =========================
@@ -131,8 +206,10 @@ async def show_level_keywords(query, level):
     
     if keywords:
         msg += "*کلمات کلیدی:*\n"
-        for i, kw in enumerate(keywords, 1):
-            msg += f"{i}. {kw}\n"
+        # نمایش در چند ستون
+        for i in range(0, len(keywords), 3):
+            row = keywords[i:i+3]
+            msg += "• " + " • ".join(row) + "\n"
     else:
         msg += "هیچ کلمه‌ای تعریف نشده است."
     
@@ -161,7 +238,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data = query.data
 
-    if data == "add_rss":
+    # وضعیت
+    if data == "status":
+        await show_status(update, context)
+
+    # منابع
+    elif data == "add_rss":
         context.user_data.clear()
         context.user_data["awaiting_add_rss"] = True
         await query.message.reply_text("📰 آدرس RSS را ارسال کنید:")
@@ -177,6 +259,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "list_sources":
         await list_sources(query, context)
 
+    # تنظیمات
     elif data == "set_target":
         context.user_data.clear()
         context.user_data["awaiting_target"] = True
@@ -196,6 +279,46 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "3 = فقط فوری"
         )
 
+    # زمان‌بندی
+    elif data == "scheduling_settings":
+        await scheduling_settings_menu(query.message)
+
+    elif data == "set_fetch_interval":
+        context.user_data.clear()
+        context.user_data["awaiting_fetch_interval"] = True
+        current = get_setting("news_fetch_interval_hours", 3)
+        await query.message.reply_text(
+            f"🔄 *تغییر بازه جمع‌آوری اخبار*\n\n"
+            f"بازه فعلی: هر {current} ساعت\n\n"
+            f"بازه جدید را ارسال کنید (1 تا 24 ساعت):",
+            parse_mode="Markdown"
+        )
+
+    elif data == "set_trend_time":
+        context.user_data.clear()
+        context.user_data["awaiting_trend_time"] = True
+        hour = get_setting("trend_hour", 23)
+        minute = get_setting("trend_minute", 55)
+        await query.message.reply_text(
+            f"⏱️ *تغییر زمان ارسال ترند*\n\n"
+            f"زمان فعلی: {hour:02d}:{minute:02d}\n\n"
+            f"زمان جدید را به فرمت HH:MM ارسال کنید\n"
+            f"(مثال: 23:55 یا 08:30):",
+            parse_mode="Markdown"
+        )
+
+    elif data == "set_min_trend_sources":
+        context.user_data.clear()
+        context.user_data["awaiting_min_trend_sources"] = True
+        current = get_setting("min_trend_sources", 2)
+        await query.message.reply_text(
+            f"📊 *تغییر حداقل منابع برای ترند*\n\n"
+            f"تعداد فعلی: {current} منبع\n\n"
+            f"حداقل منابع جدید را ارسال کنید (1 تا 10):",
+            parse_mode="Markdown"
+        )
+
+    # کلمات کلیدی
     elif data == "manage_keywords":
         await manage_keywords_menu(query.message)
 
@@ -240,7 +363,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("del_keyword|"):
         parts = data.split("|")
         level = parts[1]
-        keyword = parts[2]
+        keyword = "|".join(parts[2:])  # برای کلماتی که خودشان | دارند
         
         if remove_keyword(int(level), keyword):
             await query.answer(f"✅ کلمه '{keyword}' حذف شد")
@@ -260,7 +383,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "back_to_main":
         await start(query, context)
 
-
 # =========================
 # منوی حذف منبع
 # =========================
@@ -269,39 +391,25 @@ async def show_remove_source_menu(message):
     scrape = get_scrape_sources()
 
     keyboard = []
-
     for url in rss:
         display_url = url[:60] + "..." if len(url) > 60 else url
-        keyboard.append(
-            [InlineKeyboardButton(f"🟢 RSS | {display_url}", callback_data=f"del_rss|{url}")]
-        )
+        keyboard.append([InlineKeyboardButton(f"🟢 RSS | {display_url}", callback_data=f"del_rss|{url}")])
 
     for url in scrape:
         display_url = url[:60] + "..." if len(url) > 60 else url
-        keyboard.append(
-            [InlineKeyboardButton(f"🔵 Scrape | {display_url}", callback_data=f"del_scrape|{url}")]
-        )
+        keyboard.append([InlineKeyboardButton(f"🔵 Scrape | {display_url}", callback_data=f"del_scrape|{url}")])
 
     if not keyboard:
-        await message.reply_text(
-            "❌ هیچ منبعی برای حذف وجود ندارد.\n\n"
-            "💡 برای افزودن منبع از دکمه‌های پنل اصلی استفاده کنید."
-        )
+        await message.reply_text("❌ هیچ منبعی برای حذف وجود ندارد.")
         return
 
-    await message.reply_text(
-        "روی منبع موردنظر برای حذف کلیک کنید:",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-    )
+    await message.reply_text("روی منبع موردنظر برای حذف کلیک کنید:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
-# =========================
-# حذف منبع (Callback خاص)
-# =========================
 async def remove_source_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-
+    
     if not is_admin(update):
         return
 
@@ -319,7 +427,7 @@ async def remove_source_callback(update: Update, context: ContextTypes.DEFAULT_T
 
 
 # =========================
-# دریافت پیام‌های متنی ادمین
+# دریافت پیام‌های متنی
 # =========================
 async def receive_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update):
@@ -355,25 +463,63 @@ async def receive_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get("awaiting_target"):
         set_setting("TARGET_CHAT_ID", text)
         context.user_data.clear()
-        await update.message.reply_text(
-            f"✅ مقصد تنظیم شد: {text}\n📤 در حال ارسال پیام تست..."
-        )
+        await update.message.reply_text(f"✅ مقصد تنظیم شد: {text}\n📤 در حال ارسال پیام تست...")
 
         try:
-            await context.bot.send_message(
-                chat_id=int(text),
-                text="✅ اتصال موفق است. این پیام تست از ربات خبری سینماست.",
-            )
+            await context.bot.send_message(chat_id=int(text), text="✅ اتصال موفق است.")
             await update.message.reply_text("✅ پیام تست با موفقیت ارسال شد!")
         except Exception as e:
-            await update.message.reply_text(f"❌ ارسال پیام تست ناموفق بود:\n{e}")
+            await update.message.reply_text(f"❌ خطا: {e}")
+        return
+
+    # بازه جمع‌آوری
+    if context.user_data.get("awaiting_fetch_interval"):
+        try:
+            hours = int(text)
+            if 1 <= hours <= 24:
+                set_setting("news_fetch_interval_hours", hours)
+                await update.message.reply_text(f"✅ بازه جمع‌آوری روی {hours} ساعت تنظیم شد.\n\n⚠️ تغییرات از دفعه بعد اعمال می‌شود.")
+            else:
+                await update.message.reply_text("❌ عدد باید بین 1 تا 24 باشد.")
+        except:
+            await update.message.reply_text("❌ لطفاً یک عدد صحیح ارسال کنید.")
+        context.user_data.clear()
+        return
+
+    # زمان ترند
+    if context.user_data.get("awaiting_trend_time"):
+        try:
+            parts = text.split(":")
+            hour = int(parts[0])
+            minute = int(parts[1])
+            if 0 <= hour < 24 and 0 <= minute < 60:
+                set_setting("trend_hour", hour)
+                set_setting("trend_minute", minute)
+                await update.message.reply_text(f"✅ زمان ترند روی {hour:02d}:{minute:02d} تنظیم شد.\n\n⚠️ تغییرات از فردا اعمال می‌شود.")
+            else:
+                await update.message.reply_text("❌ ساعت یا دقیقه نامعتبر است.")
+        except:
+            await update.message.reply_text("❌ فرمت نادرست. مثال: 23:55")
+        context.user_data.clear()
+        return
+
+    # حداقل منابع ترند
+    if context.user_data.get("awaiting_min_trend_sources"):
+        try:
+            count = int(text)
+            if 1 <= count <= 10:
+                set_setting("min_trend_sources", count)
+                await update.message.reply_text(f"✅ حداقل منابع ترند روی {count} تنظیم شد.")
+            else:
+                await update.message.reply_text("❌ عدد باید بین 1 تا 10 باشد.")
+        except:
+            await update.message.reply_text("❌ لطفاً یک عدد صحیح ارسال کنید.")
+        context.user_data.clear()
         return
 
     # افزودن کلمه کلیدی
     if context.user_data.get("awaiting_add_keyword"):
         level = int(context.user_data["keyword_level"])
-        
-        # پردازش چند کلمه با ویرگول
         keywords = [kw.strip() for kw in text.split(",")]
         added = 0
         
@@ -382,9 +528,7 @@ async def receive_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 added += 1
         
         context.user_data.clear()
-        await update.message.reply_text(
-            f"✅ {added} کلمه به سطح {level} اضافه شد:\n" + ", ".join(keywords)
-        )
+        await update.message.reply_text(f"✅ {added} کلمه به سطح {level} اضافه شد.")
         return
 
     # افزودن سطح جدید
@@ -395,26 +539,19 @@ async def receive_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data["new_level_number"] = level
                 context.user_data["awaiting_new_level"] = False
                 context.user_data["awaiting_new_level_name"] = True
-                await update.message.reply_text(
-                    f"✅ سطح {level} را انتخاب کردید.\n\n"
-                    f"حالا یک نام فارسی برای این سطح ارسال کنید:"
-                )
+                await update.message.reply_text(f"✅ سطح {level}. حالا نام فارسی بدهید:")
             else:
-                await update.message.reply_text("❌ شماره سطح باید بین 0 تا 10 باشد.")
-        except ValueError:
-            await update.message.reply_text("❌ لطفاً یک عدد صحیح ارسال کنید.")
+                await update.message.reply_text("❌ شماره باید بین 0 تا 10 باشد.")
+        except:
+            await update.message.reply_text("❌ لطفاً یک عدد ارسال کنید.")
         return
 
-    # نام سطح جدید
+    # نام سطح
     if context.user_data.get("awaiting_new_level_name"):
         level = context.user_data["new_level_number"]
-        name = text
-        add_new_level(level, name, [])
+        add_new_level(level, text, [])
         context.user_data.clear()
-        await update.message.reply_text(
-            f"✅ سطح {level} ({name}) با موفقیت اضافه شد.\n\n"
-            f"حالا می‌توانید از منوی مدیریت کلمات کلیدی، کلمه به آن اضافه کنید."
-        )
+        await update.message.reply_text(f"✅ سطح {level} ({text}) اضافه شد.")
         return
 
 
@@ -422,31 +559,24 @@ async def receive_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ساخت Application
 # =========================
 def create_app():
-    """ساخت و تنظیم Application"""
     BOT_TOKEN = os.getenv("BOT_TOKEN")
     if not BOT_TOKEN:
-        raise RuntimeError("❌ BOT_TOKEN در Environment Variables تنظیم نشده است")
+        raise RuntimeError("❌ BOT_TOKEN تنظیم نشده است")
 
-    application = ApplicationBuilder().token(BOT_TOKEN).build()
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # ترتیب بسیار مهم است
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("sources", list_sources))
-    application.add_handler(CallbackQueryHandler(remove_source_callback, pattern=r"^del_(rss|scrape)\|"))
-    application.add_handler(CallbackQueryHandler(button_handler))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_message))
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("status", show_status))
+    app.add_handler(CommandHandler("sources", list_sources))
+    app.add_handler(CallbackQueryHandler(remove_source_callback, pattern=r"^del_(rss|scrape)\|"))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_message))
 
-    return application
+    return app
 
 
-# برای import کردن در main.py
 app = create_app()
 
-
-# =========================
-# اجرای مستقیم
-# =========================
 if __name__ == "__main__":
-    print("🤖 ربات خبری سینما در حال راه‌اندازی...")
-    print("✅ ربات آماده است و منتظر دریافت پیام...")
+    print("🤖 ربات در حال اجرا...")
     app.run_polling()
