@@ -1,201 +1,335 @@
 """
-مدیریت و تحلیل ترندهای روزانه
+ماژول تحلیل و ارسال ترندهای خبری سینما
 """
-
 import json
+import logging
+from collections import defaultdict, Counter
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional
 import os
-import re
-from datetime import datetime
-from collections import Counter
-import jdatetime
 
-TRENDS_FILE = "data/trends.json"
+logger = logging.getLogger(__name__)
 
-
-def _load_trends():
-    """بارگذاری ترندها از فایل"""
-    os.makedirs("data", exist_ok=True)
-    if not os.path.exists(TRENDS_FILE):
-        return []
-    with open(TRENDS_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+# مسیر فایل ذخیره topics
+TOPICS_FILE = "data/topics.json"
 
 
-def _save_trends(trends):
-    """ذخیره ترندها"""
-    os.makedirs("data", exist_ok=True)
-    with open(TRENDS_FILE, "w", encoding="utf-8") as f:
-        json.dump(trends, f, ensure_ascii=False, indent=2)
+def load_topics() -> Dict:
+    """بارگذاری topics ذخیره شده"""
+    if os.path.exists(TOPICS_FILE):
+        try:
+            with open(TOPICS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"Error loading topics: {e}")
+    return {}
 
 
-def normalize(title):
-    """نرمال‌سازی عنوان برای مقایسه"""
-    # حذف کاراکترهای خاص
-    title = re.sub(r'[^\w\s]', ' ', title.lower())
-    # حذف فضاهای اضافی
-    title = ' '.join(title.split())
-    # فقط 10 کلمه اول
-    words = title.split()[:10]
-    return ' '.join(words)
-
-
-def save_topic(title, link, source, date):
-    """ذخیره یک موضوع/خبر"""
-    trends = _load_trends()
-    
-    normalized_title = normalize(title)
-    
-    trends.append({
-        "title": title,
-        "normalized_title": normalized_title,
-        "link": link,
-        "source": source,
-        "date": date
-    })
-    
-    _save_trends(trends)
-
-
-def get_daily_trends(date, min_sources=2):
-    """
-    دریافت ترندهای یک روز خاص
-    
-    Args:
-        date: تاریخ به فرمت ISO (YYYY-MM-DD)
-        min_sources: حداقل تعداد منابع برای تبدیل به ترند
-    
-    Returns:
-        لیست ترندها با تعداد منابع و لینک‌ها
-    """
-    trends = _load_trends()
-    
-    # فیلتر کردن ترندهای روز مورد نظر
-    daily_items = [t for t in trends if t["date"] == date]
-    
-    if not daily_items:
-        return []
-    
-    # گروه‌بندی بر اساس عنوان نرمال شده
-    grouped = {}
-    for item in daily_items:
-        norm_title = item["normalized_title"]
-        
-        if norm_title not in grouped:
-            grouped[norm_title] = {
-                "title": item["title"],  # عنوان اصلی اولین خبر
-                "sources": set(),
-                "links": []
-            }
-        
-        grouped[norm_title]["sources"].add(item["source"])
-        grouped[norm_title]["links"].append({
-            "link": item["link"],
-            "source": item["source"]
-        })
-    
-    # فیلتر کردن فقط موارد با حداقل منبع مورد نیاز
-    result = []
-    for norm_title, data in grouped.items():
-        source_count = len(data["sources"])
-        if source_count >= min_sources:
-            result.append({
-                "title": data["title"],
-                "source_count": source_count,
-                "links": data["links"][:3]  # فقط 3 لینک اول
-            })
-    
-    # مرتب‌سازی بر اساس تعداد منابع (بیشترین اول)
-    result.sort(key=lambda x: x["source_count"], reverse=True)
-    
-    return result
-
-
-def format_trend_message(date, min_sources=2):
-    """
-    ساخت پیام فرمت شده ترندهای روز
-    
-    Args:
-        date: تاریخ به فرمت ISO
-        min_sources: حداقل منابع
-    
-    Returns:
-        پیام فرمت شده با Markdown
-    """
-    trends = get_daily_trends(date, min_sources)
-    
-    if not trends:
-        return None
-    
-    # تبدیل تاریخ به شمسی و میلادی
+def save_topics(topics: Dict):
+    """ذخیره topics"""
+    os.makedirs(os.path.dirname(TOPICS_FILE), exist_ok=True)
     try:
-        dt = datetime.fromisoformat(date)
-        jdt = jdatetime.datetime.fromgregorian(datetime=dt)
+        with open(TOPICS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(topics, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"Error saving topics: {e}")
+
+
+def extract_keywords(title: str, min_word_length: int = 4) -> List[str]:
+    """
+    استخراج کلمات کلیدی از عنوان خبر
+    
+    Args:
+        title: عنوان خبر
+        min_word_length: حداقل طول کلمه برای در نظر گرفتن
+    
+    Returns:
+        لیست کلمات کلیدی
+    """
+    # حذف کاراکترهای خاص
+    import re
+    title_clean = re.sub(r'[^\w\s]', ' ', title.lower())
+    
+    # کلمات رایج که نباید به عنوان keyword در نظر گرفته بشن
+    stop_words = {
+        'the', 'and', 'for', 'with', 'from', 'this', 'that', 'will', 
+        'have', 'been', 'are', 'was', 'were', 'what', 'when', 'where',
+        'who', 'why', 'how', 'about', 'after', 'before', 'into', 'through',
+        'movie', 'film', 'new', 'first', 'more', 'gets', 'release', 'announced'
+    }
+    
+    # استخراج کلمات
+    words = [
+        word for word in title_clean.split() 
+        if len(word) >= min_word_length and word not in stop_words
+    ]
+    
+    return words
+
+
+def calculate_similarity(title1: str, title2: str) -> float:
+    """
+    محاسبه شباهت بین دو عنوان
+    
+    Returns:
+        عدد بین 0 تا 1 که نشان‌دهنده میزان شباهت است
+    """
+    keywords1 = set(extract_keywords(title1))
+    keywords2 = set(extract_keywords(title2))
+    
+    if not keywords1 or not keywords2:
+        return 0.0
+    
+    # Jaccard similarity
+    intersection = keywords1.intersection(keywords2)
+    union = keywords1.union(keywords2)
+    
+    return len(intersection) / len(union) if union else 0.0
+
+
+def group_similar_news(news_list: List[Dict], similarity_threshold: float = 0.4) -> List[List[Dict]]:
+    """
+    گروه‌بندی اخبار مشابه
+    
+    Args:
+        news_list: لیست اخبار
+        similarity_threshold: حد آستانه شباهت (0 تا 1)
+    
+    Returns:
+        لیستی از گروه‌های خبری مشابه
+    """
+    groups = []
+    used = set()
+    
+    for i, news1 in enumerate(news_list):
+        if i in used:
+            continue
         
-        persian_date = jdt.strftime('%Y/%m/%d')
-        gregorian_date = dt.strftime('%Y-%m-%d')
+        group = [news1]
+        used.add(i)
         
-        day_name_fa = jdt.strftime('%A')  # نام روز فارسی
-    except:
-        persian_date = date
-        gregorian_date = date
-        day_name_fa = ""
+        for j, news2 in enumerate(news_list[i+1:], start=i+1):
+            if j in used:
+                continue
+            
+            similarity = calculate_similarity(news1['title'], news2['title'])
+            
+            if similarity >= similarity_threshold:
+                group.append(news2)
+                used.add(j)
+        
+        groups.append(group)
+    
+    return groups
+
+
+def find_daily_trends(news_list: List[Dict], min_sources: int = 3) -> List[Dict]:
+    """
+    پیدا کردن ترندهای روزانه
+    
+    Args:
+        news_list: لیست کل اخبار روز
+        min_sources: حداقل تعداد منبع برای تبدیل شدن به ترند
+    
+    Returns:
+        لیست ترندها با اطلاعات کامل
+    """
+    # فیلتر اخبار امروز
+    today = datetime.now().date()
+    today_news = [
+        news for news in news_list 
+        if datetime.fromisoformat(news.get('published', datetime.now().isoformat())).date() == today
+    ]
+    
+    if not today_news:
+        logger.info("No news found for today")
+        return []
+    
+    # گروه‌بندی اخبار مشابه
+    groups = group_similar_news(today_news)
+    
+    # پیدا کردن ترندها (گروه‌هایی با حداقل min_sources منبع)
+    trends = []
+    
+    for group in groups:
+        if len(group) >= min_sources:
+            # استخراج منابع یکتا
+            sources = list(set([news.get('source', 'Unknown') for news in group]))
+            
+            # انتخاب بهترین عنوان (طولانی‌ترین یا جامع‌ترین)
+            best_title = max(group, key=lambda x: len(x.get('title', '')))['title']
+            
+            # شمارش کلمات کلیدی تکراری
+            all_keywords = []
+            for news in group:
+                all_keywords.extend(extract_keywords(news['title']))
+            
+            keyword_counts = Counter(all_keywords)
+            top_keywords = [kw for kw, count in keyword_counts.most_common(3)]
+            
+            trend = {
+                'title': best_title,
+                'sources': sources,
+                'source_count': len(sources),
+                'news_count': len(group),
+                'keywords': top_keywords,
+                'urls': [news.get('url', '') for news in group[:5]],  # حداکثر 5 لینک
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            trends.append(trend)
+    
+    # مرتب‌سازی بر اساس تعداد منابع (از بیشترین به کمترین)
+    trends.sort(key=lambda x: x['source_count'], reverse=True)
+    
+    logger.info(f"Found {len(trends)} trends from {len(today_news)} news items")
+    
+    return trends
+
+
+def format_trends_message(trends: List[Dict], max_trends: int = 10) -> str:
+    """
+    فرمت کردن پیام ترندها به صورت لیست زیبا
+    
+    Args:
+        trends: لیست ترندها
+        max_trends: حداکثر تعداد ترند برای نمایش
+    
+    Returns:
+        پیام فرمت شده
+    """
+    if not trends:
+        return "🔍 هیچ ترند خبری امروز شناسایی نشد."
+    
+    # محدود کردن تعداد ترندها
+    trends = trends[:max_trends]
+    
+    # تاریخ امروز
+    today_date = datetime.now().strftime("%Y/%m/%d")
     
     # ساخت پیام
-    msg = "📊 *ترندهای روز سینما*\n\n"
-    msg += f"📅 {day_name_fa} {persian_date}\n"
-    msg += f"📆 میلادی: {gregorian_date}\n\n"
-    msg += f"🔥 *داغ‌ترین اخبار روز* (حداقل {min_sources} منبع):\n\n"
+    message_parts = [
+        "📊 *ترندهای خبری سینما*",
+        f"📅 {today_date}",
+        "",
+        "🔥 *داغ‌ترین اخبار امروز:*",
+        ""
+    ]
     
-    for i, trend in enumerate(trends[:10], 1):  # فقط 10 ترند اول
-        title = trend["title"][:100]  # محدود کردن طول عنوان
-        count = trend["source_count"]
-        first_link = trend["links"][0]["link"] if trend["links"] else "#"
+    # اضافه کردن هر ترند
+    for idx, trend in enumerate(trends, 1):
+        # ایموجی بر اساس رتبه
+        if idx == 1:
+            emoji = "🥇"
+        elif idx == 2:
+            emoji = "🥈"
+        elif idx == 3:
+            emoji = "🥉"
+        else:
+            emoji = f"{idx}️⃣"
         
-        msg += f"{i}. [{title}]({first_link})\n"
-        msg += f"   📰 {count} منبع\n\n"
+        # فرمت ترند
+        trend_text = [
+            f"{emoji} *{trend['title']}*",
+            f"   📰 منابع: {', '.join(trend['sources'][:3])}",  # حداکثر 3 منبع
+        ]
+        
+        # اگر بیش از 3 منبع داره
+        if len(trend['sources']) > 3:
+            trend_text.append(f"   ➕ و {len(trend['sources']) - 3} منبع دیگر")
+        
+        # اضافه کردن تعداد اخبار
+        trend_text.append(f"   🔢 تعداد اخبار: {trend['news_count']}")
+        
+        # اضافه کردن لینک اولین خبر
+        if trend['urls'] and trend['urls'][0]:
+            trend_text.append(f"   🔗 [مشاهده خبر]({trend['urls'][0]})")
+        
+        trend_text.append("")  # خط خالی بین ترندها
+        
+        message_parts.extend(trend_text)
     
-    msg += f"_✅ مجموع {len(trends)} ترند یافت شد_"
+    # اضافه کردن footer
+    message_parts.extend([
+        "━━━━━━━━━━━━━━━━━",
+        "🎬 *ربات خبری سینما*",
+        f"⏰ آخرین بروزرسانی: {datetime.now().strftime('%H:%M')}"
+    ])
     
-    return msg
+    return "\n".join(message_parts)
 
 
-def clear_old_trends(days=7):
-    """حذف ترندهای قدیمی‌تر از N روز"""
-    trends = _load_trends()
-    today = datetime.now().date()
+def send_daily_trends(bot, chat_id: int, news_list: List[Dict], min_sources: int = 3):
+    """
+    ارسال ترندهای روزانه به کانال
     
-    filtered = []
-    for t in trends:
-        try:
-            trend_date = datetime.fromisoformat(t["date"]).date()
-            age = (today - trend_date).days
-            if age <= days:
-                filtered.append(t)
-        except:
-            # اگر تاریخ معتبر نبود، نگه دار
-            filtered.append(t)
-    
-    _save_trends(filtered)
-    return len(trends) - len(filtered)
+    Args:
+        bot: نمونه ربات تلگرام
+        chat_id: آیدی کانال/گروه مقصد
+        news_list: لیست کل اخبار
+        min_sources: حداقل تعداد منبع برای تبدیل شدن به ترند
+    """
+    try:
+        # پیدا کردن ترندها
+        trends = find_daily_trends(news_list, min_sources)
+        
+        if not trends:
+            logger.info("No trends to send today")
+            return
+        
+        # فرمت کردن پیام
+        message = format_trends_message(trends)
+        
+        # ارسال پیام
+        bot.send_message(
+            chat_id=chat_id,
+            text=message,
+            parse_mode='Markdown',
+            disable_web_page_preview=False
+        )
+        
+        logger.info(f"Successfully sent {len(trends)} trends to {chat_id}")
+        
+        # ذخیره ترندها
+        topics = load_topics()
+        today_key = datetime.now().strftime("%Y-%m-%d")
+        topics[today_key] = trends
+        save_topics(topics)
+        
+    except Exception as e:
+        logger.error(f"Error sending daily trends: {e}")
 
 
+# تست
 if __name__ == "__main__":
-    # تست
-    print("🧪 تست سیستم ترندها...\n")
+    # نمونه اخبار برای تست
+    test_news = [
+        {
+            'title': 'Christopher Nolan Wins Best Director at Oscars 2024',
+            'source': 'Variety',
+            'published': datetime.now().isoformat(),
+            'url': 'https://example.com/1'
+        },
+        {
+            'title': 'Nolan Takes Home Best Director Oscar for Oppenheimer',
+            'source': 'Hollywood Reporter',
+            'published': datetime.now().isoformat(),
+            'url': 'https://example.com/2'
+        },
+        {
+            'title': 'Christopher Nolan Wins Oscar for Directing Oppenheimer',
+            'source': 'Deadline',
+            'published': datetime.now().isoformat(),
+            'url': 'https://example.com/3'
+        },
+        {
+            'title': 'Barbie Movie Breaks Box Office Records',
+            'source': 'BoxOfficeMojo',
+            'published': datetime.now().isoformat(),
+            'url': 'https://example.com/4'
+        },
+    ]
     
-    # تست ذخیره
-    today = datetime.now().date().isoformat()
-    save_topic("Breaking: New Marvel Movie Announced", "http://example.com/1", "source1", today)
-    save_topic("Marvel announces new blockbuster film", "http://example.com/2", "source2", today)
-    save_topic("Exciting Marvel News: New Film Coming", "http://example.com/3", "source3", today)
-    
-    # تست دریافت
-    trends = get_daily_trends(today, min_sources=2)
-    print(f"✅ {len(trends)} ترند یافت شد\n")
-    
-    # تست فرمت
-    msg = format_trend_message(today, min_sources=2)
-    if msg:
-        print(msg)
-    else:
-        print("❌ ترندی یافت نشد")
+    trends = find_daily_trends(test_news, min_sources=2)
+    message = format_trends_message(trends)
+    print(message)
