@@ -35,6 +35,34 @@ def save_topics(topics: Dict):
         logger.error(f"Error saving topics: {e}")
 
 
+# Backward compatibility: تابع قدیمی save_topic
+def save_topic(topic_name: str, sources: List[str]):
+    """
+    تابع قدیمی برای سازگاری با نسخه‌های قبلی
+    ذخیره یک topic با لیست منابع
+    """
+    topics = load_topics()
+    today_key = datetime.now().strftime("%Y-%m-%d")
+    
+    if today_key not in topics:
+        topics[today_key] = []
+    
+    # ساخت فرمت جدید از داده‌های قدیمی
+    topic_data = {
+        'title': topic_name,
+        'sources': sources,
+        'source_count': len(sources),
+        'news_count': len(sources),
+        'keywords': [],
+        'urls': [],
+        'timestamp': datetime.now().isoformat()
+    }
+    
+    topics[today_key].append(topic_data)
+    save_topics(topics)
+    logger.info(f"Saved topic (legacy): {topic_name} with {len(sources)} sources")
+
+
 def extract_keywords(title: str, min_word_length: int = 4) -> List[str]:
     """
     استخراج کلمات کلیدی از عنوان خبر
@@ -257,6 +285,14 @@ def format_trends_message(trends: List[Dict], max_trends: int = 10) -> str:
     ])
     
     return "\n".join(message_parts)
+
+
+# Backward compatibility: alias برای تابع قدیمی
+def format_trend_message(trends: List[Dict], max_trends: int = 10) -> str:
+    """
+    تابع قدیمی برای سازگاری با نسخه‌های قبلی
+    """
+    return format_trends_message(trends, max_trends)
 
 
 def send_daily_trends(bot, chat_id: int, news_list: List[Dict], min_sources: int = 3):
