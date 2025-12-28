@@ -103,6 +103,15 @@ def translate_with_fallback(text: str) -> str:
     return translated if translated else text
 
 
+# Backward compatibility: alias برای تابع قدیمی
+def translate_title(text: str) -> str:
+    """
+    تابع قدیمی برای سازگاری با نسخه‌های قبلی
+    alias برای translate_with_fallback
+    """
+    return translate_with_fallback(text)
+
+
 def batch_translate(texts: list[str], delay: float = 0.5) -> list[str]:
     """
     ترجمه چندین متن به صورت دسته‌ای
