@@ -1,7 +1,7 @@
 python-telegram-bot==20.7
-feedparser
-requests
-beautifulsoup4
+feedparser==6.0.10
+requests==2.31.0
+beautifulsoup4==4.12.2
 deep-translator
 jdatetime
 pytz
@@ -10,3 +10,4 @@ lxml==4.9.3
 schedule==1.2.0
 python-dateutil==2.8.2
 google-generativeai==0.3.2
+flask==3.0.0
