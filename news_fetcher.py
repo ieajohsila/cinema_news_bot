@@ -1,55 +1,20 @@
 """
 ماژول جمع‌آوری اخبار از منابع RSS و Scraping
-و ذخیره روزانه اخبار برای تحلیل ترند
+ذخیره اخبار برای تحلیل ترند روزانه
 """
 
 import feedparser
 import requests
 from bs4 import BeautifulSoup
-from datetime import datetime, timedelta
+from datetime import datetime
 import logging
-import os
-import json
-
-from database import get_rss_sources, get_scrape_sources, is_sent, mark_sent
+from database import get_rss_sources, get_scrape_sources, is_sent, mark_sent, save_collected_news
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-DAILY_NEWS_DIR = "data/daily_news"
-os.makedirs(DAILY_NEWS_DIR, exist_ok=True)
-
-
-def save_collected_news(all_articles):
-    """ذخیره اخبار در فایل روزانه"""
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    file_path = os.path.join(DAILY_NEWS_DIR, f"{today_str}.json")
-    
-    try:
-        with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(all_articles, f, ensure_ascii=False, indent=2)
-        logger.info(f"💾 {len(all_articles)} خبر در {file_path} ذخیره شد")
-    except Exception as e:
-        logger.error(f"❌ خطا در ذخیره اخبار روزانه: {e}")
-
-
-def get_collected_news(date_str=None):
-    """خواندن اخبار روزانه"""
-    if not date_str:
-        date_str = datetime.now().strftime("%Y-%m-%d")
-    file_path = os.path.join(DAILY_NEWS_DIR, f"{date_str}.json")
-    
-    if os.path.exists(file_path):
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e:
-            logger.error(f"❌ خطا در خواندن اخبار روزانه: {e}")
-    return []
-
 
 def fetch_rss_feed(url):
-    """دریافت اخبار از یک فید RSS"""
     try:
         logger.info(f"📰 در حال خواندن RSS: {url[:50]}...")
         feed = feedparser.parse(url)
@@ -90,7 +55,6 @@ def fetch_rss_feed(url):
 
 
 def fetch_scraped_page(url):
-    """دریافت اخبار با scraping مستقیم از صفحه"""
     try:
         logger.info(f"🕷️  در حال Scraping: {url[:50]}...")
         headers = {
@@ -101,15 +65,13 @@ def fetch_scraped_page(url):
         soup = BeautifulSoup(response.content, "html.parser")
         articles = []
         links = soup.find_all("a", href=True)
-        seen_in_this_page = set()
+        seen_in_page = set()
         for link in links[:30]:
             href = link.get("href", "")
             if href.startswith("/"):
                 from urllib.parse import urljoin
                 href = urljoin(url, href)
-            if not href.startswith("http"):
-                continue
-            if href in seen_in_this_page or is_sent(href):
+            if not href.startswith("http") or href in seen_in_page or is_sent(href):
                 continue
             keywords = ["news", "article", "cinema", "film", "movie", "entertainment", "/20"]
             if not any(k in href.lower() for k in keywords):
@@ -126,7 +88,7 @@ def fetch_scraped_page(url):
                 "source": url,
                 "published": datetime.now().isoformat(),
             })
-            seen_in_this_page.add(href)
+            seen_in_page.add(href)
             mark_sent(href)
             if len(articles) >= 10:
                 break
@@ -138,23 +100,26 @@ def fetch_scraped_page(url):
 
 
 def fetch_all_news():
-    """جمع‌آوری تمام اخبار از همه منابع و ذخیره روزانه"""
     logger.info("\n" + "="*60)
     logger.info("🔄 شروع جمع‌آوری اخبار از تمام منابع...")
-    logger.info("="*60)
     all_articles = []
     rss_sources = get_rss_sources()
-    for rss_url in rss_sources:
-        all_articles.extend(fetch_rss_feed(rss_url))
+    logger.info(f"📰 تعداد منابع RSS: {len(rss_sources)}")
+    for rss in rss_sources:
+        all_articles.extend(fetch_rss_feed(rss))
     scrape_sources = get_scrape_sources()
-    for scrape_url in scrape_sources:
-        all_articles.extend(fetch_scraped_page(scrape_url))
+    logger.info(f"🕷️  تعداد منابع Scraping: {len(scrape_sources)}")
+    for scrape in scrape_sources:
+        all_articles.extend(fetch_scraped_page(scrape))
     logger.info(f"✅ جمعاً {len(all_articles)} خبر جدید جمع‌آوری شد")
     if all_articles:
         save_collected_news(all_articles)
+        logger.info("💾 اخبار در فایل ذخیره شدند")
     return all_articles
 
 
 if __name__ == "__main__":
     news = fetch_all_news()
-    print(f"📰 تعداد اخبار: {len(news)}")
+    print(f"📊 تعداد اخبار: {len(news)}")
+    if news:
+        print(f"📰 اولین خبر: {news[0]['title'][:60]}...")
