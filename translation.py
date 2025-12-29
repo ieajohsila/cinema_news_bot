@@ -1,8 +1,7 @@
 """
-ماژول ترجمه هوشمند با سه سطح:
-1. Gemini (با امتحان مدل‌های مختلف)
+ماژول ترجمه هوشمند با دو سطح:
+1. Gemini (اولویت اول) - مدل gemini-2.0-flash-lite
 2. Google Translate رایگان (fallback)
-3. متن اصلی (اگر همه ناموفق بودند)
 """
 
 import os
@@ -17,56 +16,43 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # -------------------------------------------------
-# تلاش برای Gemini با مدل‌های مختلف
+# تلاش برای Gemini با مدل جدید
 # -------------------------------------------------
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL_NAME", "gemini-2.0-flash-lite")
 gemini_model = None
-active_model_name = None
+
+logger.info("="*60)
+logger.info("🔧 شروع مقداردهی سیستم ترجمه...")
+logger.info("="*60)
 
 if GEMINI_API_KEY:
+    logger.info(f"✅ GEMINI_API_KEY یافت شد: {GEMINI_API_KEY[:20]}...")
+    logger.info(f"🎯 مدل مورد استفاده: {GEMINI_MODEL_NAME}")
+    
     try:
         import google.generativeai as genai
         
         logger.info("⏳ پیکربندی Gemini...")
         genai.configure(api_key=GEMINI_API_KEY)
         
-        # لیست مدل‌های Gemini به ترتیب اولویت
-        model_names = [
-            "gemini-1.5-flash-latest",
-            "gemini-1.5-flash-002",
-            "gemini-1.5-flash",
-            "gemini-1.5-pro-latest",
-            "gemini-pro",
-            "gemini-1.0-pro-latest",
-            "gemini-1.0-pro"
-        ]
+        logger.info(f"⏳ ساخت مدل {GEMINI_MODEL_NAME}...")
+        gemini_model = genai.GenerativeModel(GEMINI_MODEL_NAME)
         
-        # امتحان هر مدل
-        for model_name in model_names:
-            try:
-                logger.info(f"   🔍 امتحان مدل: {model_name}")
-                temp_model = genai.GenerativeModel(model_name)
-                
-                # تست سریع
-                test = temp_model.generate_content("Translate to Persian: Hello", 
-                                                   request_options={"timeout": 5})
-                
-                if test and test.text and len(test.text.strip()) > 0:
-                    gemini_model = temp_model
-                    active_model_name = model_name
-                    logger.info(f"✅ Gemini فعال شد با مدل: {model_name}")
-                    logger.info(f"   تست: Hello → {test.text.strip()[:50]}")
-                    break
-                    
-            except Exception as model_error:
-                logger.debug(f"   ❌ {model_name} کار نکرد: {str(model_error)[:100]}")
-                continue
+        # تست سریع
+        logger.info("⏳ تست سریع ترجمه با Gemini...")
+        test = gemini_model.generate_content("Translate to Persian in one word: Hello")
         
-        if not gemini_model:
-            logger.warning("⚠️ هیچ مدل Gemini قابل استفاده نبود")
+        if test and test.text:
+            logger.info(f"✅ تست Gemini موفق: Hello → {test.text.strip()}")
+            logger.info("✅ Gemini فعال و آماده است")
+        else:
+            raise Exception("پاسخ خالی از Gemini")
             
     except Exception as e:
-        logger.error(f"❌ خطا در راه‌اندازی Gemini: {e}")
+        logger.error(f"❌ خطا در Gemini: {e}")
+        logger.error(f"   نوع خطا: {type(e).__name__}")
+        logger.warning("⚠️ Gemini غیرفعال شد، fallback به Google Translate")
         gemini_model = None
 else:
     logger.warning("⚠️ GEMINI_API_KEY تنظیم نشده")
@@ -82,104 +68,98 @@ try:
     
     # تست سریع
     test = google_translator.translate("Hello")
-    if test:
-        logger.info("✅ Google Translate (fallback) فعال است")
-        logger.info(f"   تست: Hello → {test[:50]}")
-    else:
-        google_translator = None
-        
+    logger.info(f"✅ Google Translate فعال: Hello → {test}")
+    
 except ImportError:
-    logger.warning("⚠️ deep-translator نصب نیست (pip install deep-translator)")
+    logger.warning("⚠️ deep-translator نصب نیست")
+    logger.warning("   نصب: pip install deep-translator")
     google_translator = None
 except Exception as e:
     logger.warning(f"⚠️ Google Translate غیرفعال: {e}")
     google_translator = None
 
 # -------------------------------------------------
-# گزارش نهایی
+# انتخاب استراتژی
 # -------------------------------------------------
 if gemini_model and google_translator:
-    logger.info("🎯 استراتژی: Gemini (اولویت) + Google Translate (پشتیبان)")
+    logger.info("🎯 استراتژی: Gemini (اولویت اول) + Google Translate (پشتیبان)")
 elif gemini_model:
     logger.info("🎯 استراتژی: فقط Gemini")
 elif google_translator:
     logger.info("🎯 استراتژی: فقط Google Translate")
 else:
-    logger.error("❌ هیچ سرویس ترجمه فعال نیست - متن‌ها ترجمه نمی‌شوند!")
+    logger.error("❌ هیچ سرویس ترجمه‌ای فعال نیست!")
+
+logger.info("="*60 + "\n")
 
 
 # -------------------------------------------------
-# ترجمه با Gemini
+# ترجمه با Gemini (اولویت اول)
 # -------------------------------------------------
-def translate_with_gemini(text: str, max_retries: int = 2) -> Optional[str]:
-    """ترجمه با Gemini"""
+def translate_with_gemini(text: str) -> Optional[str]:
+    """ترجمه با Gemini - اولویت اول"""
     if not gemini_model:
         return None
     
-    for attempt in range(1, max_retries + 1):
-        try:
-            prompt = f"""Translate this English text to fluent Persian. Return ONLY the Persian translation:
+    try:
+        prompt = f"""Translate this English text to Persian. 
+Return ONLY the Persian translation with no explanations, labels, or extra text.
 
-{text}"""
+English text:
+{text}
+
+Persian translation:"""
+        
+        response = gemini_model.generate_content(prompt)
+        
+        if response and response.text:
+            result = response.text.strip()
             
-            response = gemini_model.generate_content(
-                prompt,
-                request_options={"timeout": 10}
-            )
+            # حذف پیشوندهای مزاحم
+            unwanted = ["ترجمه:", "Translation:", "Persian:", "ترجمه فارسی:"]
+            for prefix in unwanted:
+                if result.startswith(prefix):
+                    result = result[len(prefix):].strip()
             
-            if response and response.text:
-                result = response.text.strip()
-                
-                # حذف پیشوندهای مزاحم
-                prefixes = ["ترجمه:", "Translation:", "Persian:", "ترجمه فارسی:"]
-                for prefix in prefixes:
-                    if result.startswith(prefix):
-                        result = result[len(prefix):].strip()
-                
-                if len(result) > 0:
-                    return result
-            
-        except Exception as e:
-            logger.debug(f"❌ Gemini تلاش {attempt}: {str(e)[:100]}")
-            if attempt < max_retries:
-                time.sleep(0.5)
+            return result
+        
+    except Exception as e:
+        logger.error(f"❌ خطای Gemini: {type(e).__name__} - {str(e)[:100]}")
     
     return None
 
 
 # -------------------------------------------------
-# ترجمه با Google Translate
+# ترجمه با Google Translate (fallback)
 # -------------------------------------------------
 def translate_with_google(text: str) -> Optional[str]:
-    """ترجمه با Google Translate رایگان"""
+    """ترجمه با Google Translate - fallback"""
     if not google_translator:
         return None
     
     try:
-        # محدودیت طول
-        if len(text) > 4500:
-            text = text[:4500]
+        # محدودیت طول (5000 کاراکتر)
+        if len(text) > 5000:
+            text = text[:5000]
         
         result = google_translator.translate(text)
-        
-        if result and len(result.strip()) > 0:
-            return result.strip()
+        return result
         
     except Exception as e:
-        logger.debug(f"❌ Google Translate خطا: {str(e)[:100]}")
+        logger.error(f"❌ خطای Google Translate: {type(e).__name__} - {str(e)[:100]}")
     
     return None
 
 
 # -------------------------------------------------
-# ترجمه هوشمند (با fallback خودکار)
+# ترجمه هوشمند (با اولویت Gemini)
 # -------------------------------------------------
 def translate_to_persian(text: str) -> Optional[str]:
     """
     ترجمه هوشمند با اولویت:
-    1. Gemini (سریع و با کیفیت)
-    2. Google Translate (رایگان و قابل اطمینان)
-    3. None (اگر همه ناموفق بودند)
+    1. اول Gemini امتحان میشه (اولویت اول)
+    2. اگه ناموفق بود، Google Translate
+    3. اگه اونم ناموفق بود، None
     """
     
     if not text or len(text.strip()) < 3:
@@ -187,21 +167,23 @@ def translate_to_persian(text: str) -> Optional[str]:
     
     text = text.strip()
     
-    logger.info(f"🌐 ترجمه: {text[:60]}...")
+    logger.info(f"🌐 ترجمه: {text[:80]}...")
     
-    # تلاش 1: Gemini
+    # اولویت 1: Gemini
     if gemini_model:
+        logger.debug("   📍 تلاش با Gemini...")
         result = translate_with_gemini(text)
         if result:
-            logger.info(f"✅ Gemini ({active_model_name}): {result[:60]}...")
+            logger.info(f"✅ Gemini: {result[:80]}...")
             return result
-        logger.debug("⚠️ Gemini ناموفق، تلاش با Google Translate...")
+        logger.warning("⚠️ Gemini ناموفق، fallback به Google Translate...")
     
-    # تلاش 2: Google Translate
+    # اولویت 2: Google Translate
     if google_translator:
+        logger.debug("   📍 تلاش با Google Translate...")
         result = translate_with_google(text)
         if result:
-            logger.info(f"✅ Google Translate: {result[:60]}...")
+            logger.info(f"✅ Google Translate: {result[:80]}...")
             return result
         logger.warning("⚠️ Google Translate هم ناموفق بود")
     
@@ -226,25 +208,24 @@ def translate_with_fallback(text: str) -> str:
 
 
 # -------------------------------------------------
-# تابع قدیمی (سازگاری با کدهای قبلی)
+# تابع قدیمی (سازگاری با کد قبلی)
 # -------------------------------------------------
 def translate_title(text: str) -> str:
-    """تابع قدیمی برای سازگاری"""
+    """تابع قدیمی برای سازگاری با کدهای قبلی"""
     return translate_with_fallback(text)
 
 
 # -------------------------------------------------
 # ترجمه دسته‌ای
 # -------------------------------------------------
-def batch_translate(texts: List[str], delay: float = 0.3) -> List[str]:
+def batch_translate(texts: List[str], delay: float = 0.5) -> List[str]:
     """ترجمه چند متن با تاخیر"""
     results = []
     
-    for i, text in enumerate(texts, 1):
-        logger.info(f"📝 ترجمه {i}/{len(texts)}")
+    for text in texts:
         results.append(translate_with_fallback(text))
         
-        if delay > 0 and i < len(texts):
+        if delay > 0:
             time.sleep(delay)
     
     return results
@@ -254,25 +235,19 @@ def batch_translate(texts: List[str], delay: float = 0.3) -> List[str]:
 # تست دستی
 # -------------------------------------------------
 if __name__ == "__main__":
-    print("\n" + "="*70)
+    print("\n" + "="*60)
     print("🧪 تست سیستم ترجمه")
-    print("="*70)
+    print("="*60)
     
     test_texts = [
         "Breaking: Christopher Nolan wins Best Director Oscar",
-        "Marvel releases stunning new trailer for upcoming film",
-        "Netflix announces record subscriber growth this quarter"
+        "Marvel releases stunning new trailer",
+        "Netflix announces record subscriber growth"
     ]
     
-    print(f"\n🔧 مدل فعال Gemini: {active_model_name if gemini_model else 'غیرفعال'}")
-    print(f"🔧 Google Translate: {'فعال' if google_translator else 'غیرفعال'}")
-    print("")
-    
-    for i, text in enumerate(test_texts, 1):
-        print(f"\n{i}. 📝 اصلی: {text}")
+    for text in test_texts:
+        print(f"\n📝 اصلی: {text}")
         result = translate_to_persian(text)
-        print(f"   🔄 ترجمه: {result if result else '❌ ناموفق'}")
+        print(f"🔄 ترجمه: {result if result else 'ناموفق'}")
     
-    print("\n" + "="*70)
-    print("✅ تست تمام شد")
-    print("="*70 + "\n")
+    print("\n" + "="*60)
