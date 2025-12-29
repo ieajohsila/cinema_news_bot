@@ -14,5 +14,7 @@ DEFAULT_SCRAPE_SITES = [
     "https://www.hollywoodreporter.com/c/news/",
     "https://www.imdb.com/news/top/",
     "https://www.screendaily.com/news",
+    "https://www.zoomg.ir/cinema/feed/",
     "https://www.empireonline.com/movies/news/"
 ]
+
