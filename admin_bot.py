@@ -52,6 +52,8 @@ def get_main_menu_keyboard():
         [InlineKeyboardButton("⚙️ تنظیم حداقل اهمیت", callback_data="set_min_importance")],
         [InlineKeyboardButton("🔧 مدیریت کلمات کلیدی", callback_data="manage_keywords")],
         [InlineKeyboardButton("⏰ تنظیمات زمان‌بندی", callback_data="scheduling_settings")],
+        [InlineKeyboardButton("📰 ارسال خبر تست", callback_data="send_test_news")],
+        [InlineKeyboardButton("📊 ارسال ترند تست", callback_data="send_test_trend")],
     ]
 
 
@@ -507,6 +509,27 @@ async def remove_source_callback(update: Update, context: ContextTypes.DEFAULT_T
         remove_scrape_source(url)
         await query.answer("✅ منبع Scraping حذف شد", show_alert=True)
         await show_remove_source_menu(query)
+elif data == "send_test_news":
+    # بررسی منابع و ارسال یک خبر واقعی برای تست
+    from news_scheduler import fetch_latest_news  # فرض بر اینه تابع موجوده
+    news_item = await fetch_latest_news(limit=1)  # یک خبر بگیر
+    if news_item:
+        msg = f"📰 *خبر تست:*\n\n*عنوان:* {news_item['title']}\n*لینک:* {news_item['link']}"
+        await query.message.reply_text(msg, parse_mode="Markdown")
+    else:
+        await query.message.reply_text("❌ هیچ خبری برای تست یافت نشد.")
+
+elif data == "send_test_trend":
+    # ساخت لیست ترند تست
+    from news_scheduler import get_trending_news  # فرض بر اینه تابع موجوده
+    trends = await get_trending_news(limit=5)
+    if trends:
+        msg = "📊 *لیست ترند تست:*\n\n"
+        for i, t in enumerate(trends, 1):
+            msg += f"{i}. {t['title']} ({t['source']})\n"
+        await query.message.reply_text(msg, parse_mode="Markdown")
+    else:
+        await query.message.reply_text("❌ ترندی برای تست یافت نشد.")
 
 
 # =========================
