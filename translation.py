@@ -3,7 +3,7 @@
 - ترجمه انگلیسی به فارسی
 - fallback امن
 - لاگ شفاف
-- سازگار با scheduler و bot async
+- بدون system_instruction (سازگار با SDK فعلی)
 """
 
 import os
@@ -21,47 +21,51 @@ logger = logging.getLogger(__name__)
 # Gemini Config
 # -------------------------------------------------
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
 model = None
 
 if GEMINI_API_KEY:
     try:
         genai.configure(api_key=GEMINI_API_KEY)
 
-        model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
-            system_instruction=(
-                "You are a professional English-to-Persian translator. "
-                "Translate any English input into fluent, natural Persian. "
-                "Preserve the original tone (formal or informal). "
-                "Return ONLY the translated Persian text, nothing else."
-            )
-        )
+        model = genai.GenerativeModel("gemini-1.5-flash")
 
         logger.info("✅ Gemini model initialized successfully")
 
     except Exception as e:
-        logger.error(f"❌ Failed to initialize Gemini model: {e}", exc_info=True)
+        logger.error(
+            f"❌ Failed to initialize Gemini model: {e}",
+            exc_info=True
+        )
         model = None
 else:
     logger.warning("⚠️ GEMINI_API_KEY not found. Translation is disabled.")
 
 
 # -------------------------------------------------
+# Prompt Builder
+# -------------------------------------------------
+def build_translation_prompt(text: str) -> str:
+    return f"""
+You are a professional English-to-Persian translator.
+
+Rules:
+- Translate the text into fluent, natural Persian.
+- Preserve the original tone (formal or informal).
+- DO NOT add explanations.
+- DO NOT add labels or prefixes.
+- Return ONLY the Persian translation.
+
+Text:
+{text}
+
+Persian translation:
+""".strip()
+
+
+# -------------------------------------------------
 # Core Translation
 # -------------------------------------------------
 def translate_to_persian(text: str, max_retries: int = 2) -> Optional[str]:
-    """
-    ترجمه متن انگلیسی به فارسی با Gemini
-
-    Args:
-        text: متن انگلیسی
-        max_retries: تعداد تلاش مجدد
-
-    Returns:
-        متن فارسی یا None
-    """
-
     if not model:
         logger.error("❌ Gemini model is not available")
         return None
@@ -74,15 +78,17 @@ def translate_to_persian(text: str, max_retries: int = 2) -> Optional[str]:
     if len(text) < 3:
         return None
 
-    logger.info(f"🌐 Translating text: {text[:80]}...")
+    prompt = build_translation_prompt(text)
+
+    logger.info(f"🌐 Translating: {text[:80]}...")
 
     for attempt in range(1, max_retries + 2):
         try:
-            response = model.generate_content(text)
+            response = model.generate_content(prompt)
 
             if not response or not response.text:
                 logger.warning(
-                    f"⚠️ Empty response from Gemini (attempt {attempt})"
+                    f"⚠️ Empty response (attempt {attempt})"
                 )
                 continue
 
@@ -112,9 +118,7 @@ def translate_to_persian(text: str, max_retries: int = 2) -> Optional[str]:
             )
 
             if attempt >= max_retries + 1:
-                logger.error(
-                    f"❌ Translation failed after {attempt} attempts"
-                )
+                logger.error("❌ Translation failed completely")
                 return None
 
             time.sleep(1)
@@ -123,14 +127,9 @@ def translate_to_persian(text: str, max_retries: int = 2) -> Optional[str]:
 
 
 # -------------------------------------------------
-# Fallback Wrapper (برای استفاده امن در bot)
+# Fallback Wrapper
 # -------------------------------------------------
 def translate_with_fallback(text: str) -> str:
-    """
-    ترجمه با fallback:
-    اگر ترجمه fail شود، متن اصلی برمی‌گردد
-    """
-
     translated = translate_to_persian(text)
 
     if not translated:
@@ -144,9 +143,6 @@ def translate_with_fallback(text: str) -> str:
 # Backward Compatibility
 # -------------------------------------------------
 def translate_title(text: str) -> str:
-    """
-    alias قدیمی برای سازگاری با نسخه‌های قبلی
-    """
     return translate_with_fallback(text)
 
 
@@ -154,22 +150,10 @@ def translate_title(text: str) -> str:
 # Batch Translation
 # -------------------------------------------------
 def batch_translate(texts: List[str], delay: float = 0.5) -> List[str]:
-    """
-    ترجمه لیستی از متون
-
-    Args:
-        texts: لیست متن‌ها
-        delay: تأخیر بین درخواست‌ها (ثانیه)
-
-    Returns:
-        لیست متون ترجمه‌شده
-    """
-
     results = []
 
     for text in texts:
-        translated = translate_with_fallback(text)
-        results.append(translated)
+        results.append(translate_with_fallback(text))
 
         if delay > 0:
             time.sleep(delay)
