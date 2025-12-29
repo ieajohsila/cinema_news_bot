@@ -1,7 +1,26 @@
 import json
 import os
 from datetime import datetime
+from pathlib import Path
 
+DB_FILE = Path("collected_news.json")
+
+def save_collected_news(news_list):
+    """ذخیره اخبار جمع‌آوری‌شده در فایل"""
+    with open(DB_FILE, "w", encoding="utf-8") as f:
+        json.dump(news_list, f, ensure_ascii=False, indent=2)
+
+def get_collected_news(limit=None):
+    """خواندن اخبار جمع‌آوری‌شده واقعی از فایل"""
+    if not DB_FILE.exists():
+        return []
+
+    with open(DB_FILE, "r", encoding="utf-8") as f:
+        news = json.load(f)
+
+    if limit:
+        return news[:limit]
+    return news
 BASE = "data"
 os.makedirs(BASE, exist_ok=True)
 
