@@ -8,7 +8,7 @@ from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 import logging
 
-from database import get_rss_sources, get_scrape_sources, is_sent, mark_sent
+from database import get_rss_sources, get_scrape_sources, is_sent, mark_sent, save_collected_news, get_collected_news
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -53,9 +53,10 @@ def fetch_rss_feed(url):
             articles.append({
                 "title": title,
                 "link": link,
+                "url": link,  # برای سازگاری با trends.py
                 "summary": summary,
                 "source": url,
-                "published": pub_date,
+                "published": pub_date.isoformat(),
             })
             
             # علامت‌گذاری به عنوان دیده شده
@@ -122,9 +123,10 @@ def fetch_scraped_page(url):
             articles.append({
                 "title": title,
                 "link": href,
+                "url": href,  # برای سازگاری با trends.py
                 "summary": "",
                 "source": url,
-                "published": datetime.now(),
+                "published": datetime.now().isoformat(),
             })
             
             seen_in_this_page.add(href)
@@ -173,6 +175,11 @@ def fetch_all_news():
     logger.info("="*60)
     logger.info(f"✅ جمعاً {len(all_articles)} خبر جدید جمع‌آوری شد")
     logger.info("="*60 + "\n")
+    
+    # ذخیره اخبار جمع‌آوری شده
+    if all_articles:
+        save_collected_news(all_articles)
+        logger.info("💾 اخبار در فایل ذخیره شدند")
     
     return all_articles
 
