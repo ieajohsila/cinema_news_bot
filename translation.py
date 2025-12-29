@@ -15,6 +15,7 @@ import google.generativeai as genai
 # -------------------------------------------------
 # Logger
 # -------------------------------------------------
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # -------------------------------------------------
@@ -23,30 +24,47 @@ logger = logging.getLogger(__name__)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 model = None
 
+logger.info("="*60)
+logger.info("🔧 شروع مقداردهی سیستم ترجمه...")
+logger.info("="*60)
+
 if GEMINI_API_KEY:
+    logger.info(f"✅ GEMINI_API_KEY یافت شد: {GEMINI_API_KEY[:20]}...")
+    
     try:
+        logger.info("⏳ در حال پیکربندی Gemini...")
         genai.configure(api_key=GEMINI_API_KEY)
-
+        logger.info("✅ پیکربندی Gemini موفق")
+        
+        logger.info("⏳ در حال ساخت مدل gemini-1.5-flash...")
         model = genai.GenerativeModel("gemini-1.5-flash")
-
-        logger.info("✅ Gemini model initialized successfully")
-
+        logger.info("✅ مدل Gemini ساخته شد")
+        
+        # تست سریع
+        logger.info("⏳ تست سریع ترجمه...")
+        test_response = model.generate_content("Translate to Persian: Hello")
+        if test_response and test_response.text:
+            logger.info(f"✅ تست ترجمه موفق: {test_response.text[:50]}")
+        else:
+            logger.warning("⚠️ تست ترجمه پاسخ خالی داد")
+            
     except Exception as e:
-        logger.error(
-            f"❌ Failed to initialize Gemini model: {e}",
-            exc_info=True
-        )
+        logger.error(f"❌ خطا در مقداردهی Gemini: {e}", exc_info=True)
+        logger.error(f"   نوع خطا: {type(e).__name__}")
         model = None
 else:
-    logger.warning("⚠️ GEMINI_API_KEY not found. Translation is disabled.")
+    logger.warning("⚠️ GEMINI_API_KEY یافت نشد - ترجمه غیرفعال است")
+    logger.warning("💡 برای فعال‌سازی، در Railway Variables تنظیم کنید:")
+    logger.warning("   کلید: GEMINI_API_KEY")
+    logger.warning("   مقدار: your-api-key-here")
 
+logger.info("="*60)
 
 # -------------------------------------------------
 # Prompt Builder
 # -------------------------------------------------
 def build_translation_prompt(text: str) -> str:
-    return f"""
-You are a professional English-to-Persian translator.
+    return f"""You are a professional English-to-Persian translator.
 
 Rules:
 - Translate the text into fluent, natural Persian.
@@ -67,7 +85,7 @@ Persian translation:
 # -------------------------------------------------
 def translate_to_persian(text: str, max_retries: int = 2) -> Optional[str]:
     if not model:
-        logger.error("❌ Gemini model is not available")
+        logger.debug("❌ مدل Gemini در دسترس نیست")
         return None
 
     if not text or not text.strip():
@@ -80,16 +98,15 @@ def translate_to_persian(text: str, max_retries: int = 2) -> Optional[str]:
 
     prompt = build_translation_prompt(text)
 
-    logger.info(f"🌐 Translating: {text[:80]}...")
+    logger.info(f"🌐 ترجمه: {text[:80]}...")
 
     for attempt in range(1, max_retries + 2):
         try:
+            logger.debug(f"   تلاش {attempt} از {max_retries + 1}...")
             response = model.generate_content(prompt)
 
             if not response or not response.text:
-                logger.warning(
-                    f"⚠️ Empty response (attempt {attempt})"
-                )
+                logger.warning(f"⚠️ پاسخ خالی (تلاش {attempt})")
                 continue
 
             translated = response.text.strip()
@@ -106,19 +123,15 @@ def translate_to_persian(text: str, max_retries: int = 2) -> Optional[str]:
                 if translated.startswith(prefix):
                     translated = translated[len(prefix):].strip()
 
-            logger.info(
-                f"✅ Translation success: {translated[:80]}..."
-            )
+            logger.info(f"✅ ترجمه موفق: {translated[:80]}...")
             return translated
 
         except Exception as e:
-            logger.error(
-                f"❌ Translation error (attempt {attempt}): {e}",
-                exc_info=True
-            )
+            logger.error(f"❌ خطا در ترجمه (تلاش {attempt}): {e}")
+            logger.error(f"   نوع خطا: {type(e).__name__}")
 
             if attempt >= max_retries + 1:
-                logger.error("❌ Translation failed completely")
+                logger.error("❌ ترجمه کاملاً ناموفق بود")
                 return None
 
             time.sleep(1)
@@ -130,10 +143,17 @@ def translate_to_persian(text: str, max_retries: int = 2) -> Optional[str]:
 # Fallback Wrapper
 # -------------------------------------------------
 def translate_with_fallback(text: str) -> str:
+    """ترجمه با fallback - اگر ترجمه نشد، متن اصلی برمی‌گرده"""
+    
+    # اگر مدل اصلاً نساخته شده، مستقیم متن اصلی رو برگردون
+    if not model:
+        logger.debug(f"⚠️ مدل غیرفعال - متن اصلی: {text[:50]}...")
+        return text
+    
     translated = translate_to_persian(text)
 
     if not translated:
-        logger.warning("⚠️ Translation failed, returning original text")
+        logger.warning(f"⚠️ ترجمه ناموفق - متن اصلی: {text[:50]}...")
         return text
 
     return translated
@@ -143,6 +163,7 @@ def translate_with_fallback(text: str) -> str:
 # Backward Compatibility
 # -------------------------------------------------
 def translate_title(text: str) -> str:
+    """تابع قدیمی برای سازگاری"""
     return translate_with_fallback(text)
 
 
@@ -150,6 +171,7 @@ def translate_title(text: str) -> str:
 # Batch Translation
 # -------------------------------------------------
 def batch_translate(texts: List[str], delay: float = 0.5) -> List[str]:
+    """ترجمه دسته‌ای"""
     results = []
 
     for text in texts:
@@ -165,6 +187,19 @@ def batch_translate(texts: List[str], delay: float = 0.5) -> List[str]:
 # Manual Test
 # -------------------------------------------------
 if __name__ == "__main__":
-    test_text = "Breaking: New Spielberg Movie Announced for 2025"
-    print("Original:", test_text)
-    print("Translated:", translate_to_persian(test_text))
+    print("\n" + "="*60)
+    print("🧪 تست دستی ترجمه")
+    print("="*60)
+    
+    test_texts = [
+        "Breaking: New Spielberg Movie Announced for 2025",
+        "Christopher Nolan wins Best Director Oscar",
+        "Marvel releases new trailer"
+    ]
+    
+    for text in test_texts:
+        print(f"\n📝 اصلی: {text}")
+        translated = translate_to_persian(text)
+        print(f"🔄 ترجمه: {translated if translated else 'ناموفق'}")
+    
+    print("\n" + "="*60)
