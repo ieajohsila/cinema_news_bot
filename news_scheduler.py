@@ -1,7 +1,7 @@
 """
 سرویس خبررسانی خودکار - Scheduler
 با پشتیبانی از Timezone تهران
-ذخیره اخبار روزانه برای ترند و پاک‌سازی پس از ارسال
+ذخیره اخبار روزانه و ارسال ترند
 """
 
 import asyncio
@@ -14,11 +14,12 @@ import json
 from telegram import Bot
 from telegram.error import TelegramError, RetryAfter
 
-from news_fetcher import fetch_all_news, DAILY_NEWS_DIR
+from news_fetcher import fetch_all_news
 from news_ranker import rank_news
 from translation import translate_title
 from category import classify_category
-from trends import save_topic, format_trend_message
+from trends import save_topic, format_trends_message, find_daily_trends
+
 from database import get_setting, set_setting
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -30,6 +31,8 @@ if not BOT_TOKEN:
 
 bot = Bot(token=BOT_TOKEN)
 TEHRAN_TZ = pytz.timezone('Asia/Tehran')
+DAILY_NEWS_DIR = "data/daily_news"
+os.makedirs(DAILY_NEWS_DIR, exist_ok=True)
 
 
 def now_tehran():
@@ -51,8 +54,28 @@ def get_min_trend_sources():
 
 
 def get_daily_news_file():
-    today = datetime.now().strftime("%Y%m%d")
-    return os.path.join(DAILY_NEWS_DIR, f"daily_news_{today}.json")
+    return os.path.join(DAILY_NEWS_DIR, now_tehran().strftime("%Y-%m-%d") + ".json")
+
+
+def save_daily_news(news_list):
+    file_path = get_daily_news_file()
+    with open(file_path, "w", encoding="utf-8") as f:
+        json.dump(news_list, f, ensure_ascii=False, indent=2)
+
+
+def load_daily_news():
+    file_path = get_daily_news_file()
+    if os.path.exists(file_path):
+        with open(file_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return []
+
+
+def clear_daily_news():
+    file_path = get_daily_news_file()
+    if os.path.exists(file_path):
+        os.remove(file_path)
+        logger.info(f"🗑️ فایل اخبار روزانه پاک شد: {file_path}")
 
 
 async def fetch_and_send_news():
@@ -61,7 +84,9 @@ async def fetch_and_send_news():
     logger.info(f"🕐 زمان تهران: {now_tehran().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info("="*60)
     
-    set_setting("last_news_fetch", now_tehran().isoformat())
+    start_time = now_tehran()
+    set_setting("last_news_fetch", start_time.isoformat())
+    
     TARGET_CHAT_ID = get_setting("TARGET_CHAT_ID")
     if not TARGET_CHAT_ID:
         logger.warning("⚠️  آیدی مقصد تنظیم نشده است.")
@@ -70,7 +95,7 @@ async def fetch_and_send_news():
     try:
         TARGET_CHAT_ID = int(TARGET_CHAT_ID)
     except ValueError:
-        logger.error("❌ TARGET_CHAT_ID باید عدد صحیح باشد.")
+        logger.error("❌ TARGET_CHAT_ID باید یک عدد صحیح باشد.")
         return
 
     min_importance_str = get_setting("min_importance") or "1"
@@ -91,17 +116,15 @@ async def fetch_and_send_news():
 
     logger.info(f"📨 در حال ارسال {len(ranked)} خبر به کانال {TARGET_CHAT_ID}...")
     sent_count = 0
-    today_str = now_tehran().date().isoformat()
-
+    daily_news = load_daily_news()
+    
     for item in ranked:
         title_fa = translate_title(item['title'])
         summary_fa = translate_title(item.get('summary', '')[:300]) if item.get('summary') else ""
         category = classify_category(item['title'], item.get('summary', ''))
         category_hashtag = category.split()[1] if ' ' in category else category
         category_hashtag = f"#{category_hashtag}"
-
         importance_emoji = {3: "🔥🔥🔥", 2: "⭐⭐", 1: "⭐", 0: "•"}.get(item.get('importance', 1), "⭐")
-
         msg = (
             f"{category} {category_hashtag}\n\n"
             f"*{title_fa}*\n\n"
@@ -109,7 +132,6 @@ async def fetch_and_send_news():
             f"🔗 [خبر اصلی]({item['link']})\n"
             f"{importance_emoji} اهمیت: {item.get('importance', 1)}/3"
         )
-
         try:
             await bot.send_message(
                 chat_id=TARGET_CHAT_ID,
@@ -118,68 +140,69 @@ async def fetch_and_send_news():
                 disable_web_page_preview=False,
             )
             sent_count += 1
-            save_topic(item['title'], item['link'], item.get('source', 'unknown'), today_str)
+            save_topic(item['title'], item['link'], item.get('source', 'unknown'))
+            daily_news.append(item)
+            logger.info(f"✅ ارسال شد: {title_fa[:40]}...")
             await asyncio.sleep(3)
         except RetryAfter as e:
-            logger.warning(f"⏱️ Flood control: صبر {e.retry_after} ثانیه...")
+            logger.warning(f"⏱️  Flood control: صبر {e.retry_after} ثانیه...")
             await asyncio.sleep(e.retry_after + 1)
             try:
-                await bot.send_message(chat_id=TARGET_CHAT_ID, text=msg, parse_mode="Markdown")
+                await bot.send_message(
+                    chat_id=TARGET_CHAT_ID,
+                    text=msg,
+                    parse_mode="Markdown",
+                    disable_web_page_preview=False,
+                )
                 sent_count += 1
-                save_topic(item['title'], item['link'], item.get('source', 'unknown'), today_str)
+                save_topic(item['title'], item['link'], item.get('source', 'unknown'))
+                daily_news.append(item)
+                logger.info(f"✅ ارسال شد (تلاش دوم): {title_fa[:40]}...")
             except Exception as e2:
                 logger.error(f"❌ خطا در تلاش دوم: {e2}")
         except TelegramError as e:
             logger.error(f"❌ خطا در ارسال خبر: {e}")
-
+    
+    save_daily_news(daily_news)
     logger.info(f"✅ {sent_count} خبر با موفقیت ارسال شد.")
     set_setting("last_news_send", now_tehran().isoformat())
-    logger.info("="*60 + "\n")
 
 
 async def send_daily_trend():
     logger.info("\n" + "="*60)
     logger.info("📊 شروع ارسال ترند روزانه...")
+    logger.info(f"🕐 زمان تهران: {now_tehran().strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info("="*60)
+    
     TARGET_CHAT_ID = get_setting("TARGET_CHAT_ID")
     if not TARGET_CHAT_ID:
-        logger.warning("⚠️ آیدی مقصد تنظیم نشده است.")
+        logger.warning("⚠️  آیدی مقصد تنظیم نشده است.")
         return
-
     try:
         TARGET_CHAT_ID = int(TARGET_CHAT_ID)
     except ValueError:
-        logger.error("❌ TARGET_CHAT_ID باید عدد صحیح باشد.")
+        logger.error("❌ TARGET_CHAT_ID باید یک عدد صحیح باشد.")
         return
-
-    daily_file = get_daily_news_file()
-    if not os.path.exists(daily_file):
-        logger.info("📭 فایل اخبار روزانه موجود نیست، ترند ارسال نشد.")
-        return
-
-    with open(daily_file, "r", encoding="utf-8") as f:
-        daily_articles = json.load(f)
 
     min_sources = get_min_trend_sources()
-    today_str = now_tehran().date().isoformat()
-    trend_message = format_trend_message(today_str, min_sources=min_sources, daily_articles=daily_articles)
-
-    if not trend_message:
+    trends = find_daily_trends(min_sources=min_sources)
+    if not trends:
         logger.info("📭 ترند روزانه خالی است، ارسال نشد.")
         return
 
+    message = format_trends_message(trends)
     try:
         await bot.send_message(
             chat_id=TARGET_CHAT_ID,
-            text=trend_message,
+            text=message,
             parse_mode="Markdown",
             disable_web_page_preview=True,
         )
         logger.info("✅ ترند روزانه ارسال شد.")
         set_setting("last_trend_send", now_tehran().isoformat())
-        os.remove(daily_file)
+        clear_daily_news()  # پاکسازی اخبار روزانه بعد از ارسال ترند
     except TelegramError as e:
         logger.error(f"❌ خطا در ارسال ترند: {e}")
-    logger.info("="*60 + "\n")
 
 
 async def schedule_daily_trend():
@@ -189,14 +212,10 @@ async def schedule_daily_trend():
         target_time = TEHRAN_TZ.localize(datetime.combine(now.date(), trend_time))
         if now >= target_time:
             target_time += timedelta(days=1)
-
         wait_seconds = (target_time - now).total_seconds()
         set_setting("next_trend_time", target_time.isoformat())
-
         hours_left = wait_seconds / 3600
         logger.info(f"⏰ زمان باقی‌مانده تا ارسال ترند: {hours_left:.1f} ساعت")
-        logger.info(f"📅 ترند بعدی: {target_time.strftime('%Y-%m-%d %H:%M')} (تهران)")
-
         await asyncio.sleep(wait_seconds)
         await send_daily_trend()
 
@@ -208,7 +227,6 @@ async def schedule_news_fetching():
         next_fetch = now_tehran() + timedelta(hours=interval_hours)
         set_setting("next_news_fetch", next_fetch.isoformat())
         logger.info(f"😴 خواب به مدت {interval_hours} ساعت...")
-        logger.info(f"📅 دریافت بعدی: {next_fetch.strftime('%Y-%m-%d %H:%M')} (تهران)\n")
         await asyncio.sleep(interval_hours * 3600)
 
 
@@ -217,16 +235,7 @@ async def run_scheduler():
     logger.info("🤖 سرویس خبررسانی خودکار سینما")
     logger.info(f"🌍 Timezone: تهران (UTC+3:30)")
     logger.info(f"🕐 زمان فعلی: {now_tehran().strftime('%Y-%m-%d %H:%M:%S')}")
-    logger.info("="*60)
-
-    interval_hours = get_fetch_interval()
-    trend_time = get_trend_time()
-
-    logger.info(f"⏰ دریافت اخبار: هر {interval_hours} ساعت")
-    logger.info(f"📊 ارسال ترندها: روزانه ساعت {trend_time.strftime('%H:%M')} (تهران)")
-    logger.info("🛑 برای توقف: CTRL+C")
     logger.info("="*60 + "\n")
-
     await asyncio.gather(
         schedule_news_fetching(),
         schedule_daily_trend(),
