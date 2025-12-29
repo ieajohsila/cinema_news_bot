@@ -1,147 +1,186 @@
 """
-ماژول ترجمه با استفاده از Google Gemini API
+ماژول ترجمه و پردازش متن با Google Gemini
+- ترجمه انگلیسی به فارسی
+- fallback امن
+- لاگ شفاف
+- سازگار با scheduler و bot async
 """
+
 import os
+import time
 import logging
-from typing import Optional
+from typing import Optional, List
 import google.generativeai as genai
 
-# تنظیم logger
+# -------------------------------------------------
+# Logger
+# -------------------------------------------------
 logger = logging.getLogger(__name__)
 
-# تنظیم Gemini API
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+# -------------------------------------------------
+# Gemini Config
+# -------------------------------------------------
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+model = None
 
 if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-pro')
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+
+        model = genai.GenerativeModel(
+            model_name="gemini-1.5-flash",
+            system_instruction=(
+                "You are a professional English-to-Persian translator. "
+                "Translate any English input into fluent, natural Persian. "
+                "Preserve the original tone (formal or informal). "
+                "Return ONLY the translated Persian text, nothing else."
+            )
+        )
+
+        logger.info("✅ Gemini model initialized successfully")
+
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize Gemini model: {e}", exc_info=True)
+        model = None
 else:
-    logger.warning("GEMINI_API_KEY not found. Translation will be disabled.")
-    model = None
+    logger.warning("⚠️ GEMINI_API_KEY not found. Translation is disabled.")
 
 
+# -------------------------------------------------
+# Core Translation
+# -------------------------------------------------
 def translate_to_persian(text: str, max_retries: int = 2) -> Optional[str]:
     """
-    ترجمه متن انگلیسی به فارسی با استفاده از Gemini
-    
+    ترجمه متن انگلیسی به فارسی با Gemini
+
     Args:
-        text: متن انگلیسی برای ترجمه
-        max_retries: تعداد تلاش مجدد در صورت خطا
-    
+        text: متن انگلیسی
+        max_retries: تعداد تلاش مجدد
+
     Returns:
-        متن ترجمه شده به فارسی یا None در صورت خطا
+        متن فارسی یا None
     """
+
     if not model:
-        logger.error("Gemini model not initialized. Check GEMINI_API_KEY.")
+        logger.error("❌ Gemini model is not available")
         return None
-    
+
     if not text or not text.strip():
         return None
-    
-    # حذف فضاهای اضافی
+
     text = text.strip()
-    
-    # اگر متن خیلی کوتاه است
+
     if len(text) < 3:
         return None
-    
-    # پرامپت برای ترجمه دقیق
-    prompt = f"""Translate the following English text to Persian (Farsi). 
-Only provide the translation, no explanations or additional text.
-Keep the translation natural and fluent.
 
-Text to translate:
-{text}
+    logger.info(f"🌐 Translating text: {text[:80]}...")
 
-Persian translation:"""
-    
-    for attempt in range(max_retries + 1):
+    for attempt in range(1, max_retries + 2):
         try:
-            response = model.generate_content(prompt)
-            
-            if response.text:
-                # حذف فضاهای اضافی و خطوط جدید
-                translated = response.text.strip()
-                
-                # حذف عبارات اضافی که گاهی Gemini اضافه می‌کنه
-                unwanted_phrases = [
-                    "ترجمه:",
-                    "Translation:",
-                    "Persian translation:",
-                    "ترجمه فارسی:",
-                ]
-                
-                for phrase in unwanted_phrases:
-                    if translated.startswith(phrase):
-                        translated = translated[len(phrase):].strip()
-                
-                logger.info(f"Successfully translated: {text[:50]}... -> {translated[:50]}...")
-                return translated
-            else:
-                logger.warning(f"Empty response from Gemini on attempt {attempt + 1}")
-                
+            response = model.generate_content(text)
+
+            if not response or not response.text:
+                logger.warning(
+                    f"⚠️ Empty response from Gemini (attempt {attempt})"
+                )
+                continue
+
+            translated = response.text.strip()
+
+            # پاکسازی خروجی‌های مزاحم احتمالی
+            unwanted_prefixes = (
+                "ترجمه:",
+                "Translation:",
+                "Persian translation:",
+                "ترجمه فارسی:",
+            )
+
+            for prefix in unwanted_prefixes:
+                if translated.startswith(prefix):
+                    translated = translated[len(prefix):].strip()
+
+            logger.info(
+                f"✅ Translation success: {translated[:80]}..."
+            )
+            return translated
+
         except Exception as e:
-            logger.error(f"Translation error on attempt {attempt + 1}: {e}")
-            if attempt == max_retries:
-                logger.error(f"Failed to translate after {max_retries + 1} attempts: {text}")
+            logger.error(
+                f"❌ Translation error (attempt {attempt}): {e}",
+                exc_info=True
+            )
+
+            if attempt >= max_retries + 1:
+                logger.error(
+                    f"❌ Translation failed after {attempt} attempts"
+                )
                 return None
-    
+
+            time.sleep(1)
+
     return None
 
 
+# -------------------------------------------------
+# Fallback Wrapper (برای استفاده امن در bot)
+# -------------------------------------------------
 def translate_with_fallback(text: str) -> str:
     """
-    ترجمه با fallback - اگر ترجمه موفق نبود، متن اصلی برمی‌گرده
-    
-    Args:
-        text: متن برای ترجمه
-    
-    Returns:
-        متن ترجمه شده یا متن اصلی
+    ترجمه با fallback:
+    اگر ترجمه fail شود، متن اصلی برمی‌گردد
     """
+
     translated = translate_to_persian(text)
-    return translated if translated else text
+
+    if not translated:
+        logger.warning("⚠️ Translation failed, returning original text")
+        return text
+
+    return translated
 
 
-# Backward compatibility: alias برای تابع قدیمی
+# -------------------------------------------------
+# Backward Compatibility
+# -------------------------------------------------
 def translate_title(text: str) -> str:
     """
-    تابع قدیمی برای سازگاری با نسخه‌های قبلی
-    alias برای translate_with_fallback
+    alias قدیمی برای سازگاری با نسخه‌های قبلی
     """
     return translate_with_fallback(text)
 
 
-def batch_translate(texts: list[str], delay: float = 0.5) -> list[str]:
+# -------------------------------------------------
+# Batch Translation
+# -------------------------------------------------
+def batch_translate(texts: List[str], delay: float = 0.5) -> List[str]:
     """
-    ترجمه چندین متن به صورت دسته‌ای
-    
+    ترجمه لیستی از متون
+
     Args:
-        texts: لیست متون برای ترجمه
-        delay: تاخیر بین درخواست‌ها (ثانیه)
-    
+        texts: لیست متن‌ها
+        delay: تأخیر بین درخواست‌ها (ثانیه)
+
     Returns:
-        لیست متون ترجمه شده
+        لیست متون ترجمه‌شده
     """
-    import time
-    
-    translated_texts = []
-    
+
+    results = []
+
     for text in texts:
         translated = translate_with_fallback(text)
-        translated_texts.append(translated)
-        
-        # تاخیر برای جلوگیری از rate limiting
+        results.append(translated)
+
         if delay > 0:
             time.sleep(delay)
-    
-    return translated_texts
+
+    return results
 
 
-# تست
+# -------------------------------------------------
+# Manual Test
+# -------------------------------------------------
 if __name__ == "__main__":
-    # برای تست
     test_text = "Breaking: New Spielberg Movie Announced for 2025"
-    result = translate_to_persian(test_text)
-    print(f"Original: {test_text}")
-    print(f"Translated: {result}")
+    print("Original:", test_text)
+    print("Translated:", translate_to_persian(test_text))
