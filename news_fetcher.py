@@ -1,112 +1,84 @@
-"""
-ماژول جمع‌آوری اخبار از منابع RSS و Scraping
-ذخیره اخبار برای تحلیل ترند روزانه
-"""
-"""news_fetcher.py
-جمع‌آوری اخبار سینما از RSS و Scrape
-"""
 import logging
-from typing import List, Dict
-import feedparser
-import httpx
 from bs4 import BeautifulSoup
-
+import httpx
+import feedparser
 from default_sources import DEFAULT_RSS_SOURCES, DEFAULT_SCRAPE_SITES
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("news_fetcher")
+logging.basicConfig(level=logging.INFO)
 
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+}
 
-def fetch_rss(url: str) -> List[Dict]:
-    """
-    جمع‌آوری اخبار از RSS
-    """
-    articles: List[Dict] = []
+def fetch_rss_news(url):
+    """جمع‌آوری اخبار از RSS"""
     try:
         feed = feedparser.parse(url)
-        entries = getattr(feed, 'entries', [])
-        if not isinstance(entries, list):
-            logger.error(f"❌ RSS {url} نامعتبر است یا entries لیست نیست")
-            return []
-
-        for entry in entries:
-            article = {
-                'title': entry.get('title', '').strip(),
-                'url': entry.get('link', '').strip(),
-                'published': entry.get('published', ''),
-                'source': url
-            }
-            articles.append(article)
-
-        logger.info(f"✅ RSS: {len(articles)} خبر جدید از {url}")
+        news_items = []
+        for entry in feed.entries:
+            link = entry.get('link')
+            title = entry.get('title', 'بدون عنوان')
+            summary = entry.get('summary', '')
+            if link:
+                news_items.append({"title": title, "link": link, "summary": summary})
+            else:
+                logger.warning(f"خبر ناقص در RSS: {title}")
+        logger.info(f"✅ RSS: {len(news_items)} خبر جدید از {url}")
+        return news_items
     except Exception as e:
         logger.error(f"❌ خطا در RSS {url}: {e}")
-    return articles
+        return []
 
-
-def fetch_scrape(url: str) -> List[Dict]:
-    """
-    جمع‌آوری اخبار با Scrape
-    """
-    articles: List[Dict] = []
+def scrape_news(url):
+    """جمع‌آوری اخبار از سایت‌ها با Scraping"""
     try:
-        response = httpx.get(url, timeout=15.0)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, 'html.parser')
+        with httpx.Client(headers=HEADERS, follow_redirects=True, timeout=15) as client:
+            response = client.get(url)
+            response.raise_for_status()
 
-        # پیدا کردن لینک و عنوان اخبار (الگوی ساده)
-        for a in soup.find_all('a', href=True):
-            title = a.get_text(strip=True)
-            link = a['href']
+            soup = BeautifulSoup(response.text, "html.parser")
+            news_items = []
 
-            # فیلتر لینک‌های خالی یا تبلیغ
-            if not title or not link or link.startswith('#'):
-                continue
+            # استخراج لینک‌ها و عنوان‌ها از تگ <a> با href کامل
+            for a_tag in soup.find_all('a', href=True):
+                link = a_tag['href']
+                if not link.startswith("http"):
+                    continue  # لینک ناقص رد می‌شود
+                title = a_tag.get_text(strip=True) or "خبر بدون عنوان"
+                news_items.append({"title": title, "link": link})
 
-            # کامل کردن لینک‌های نسبی
-            if link.startswith('/'):
-                base = url.rstrip('/')
-                link = f"{base}{link}"
+            logger.info(f"✅ Scrape: {len(news_items)} خبر جدید از {url}")
+            return news_items
 
-            articles.append({
-                'title': title,
-                'url': link,
-                'published': '',
-                'source': url
-            })
-
-        logger.info(f"✅ Scrape: {len(articles)} خبر جدید از {url}")
+    except httpx.HTTPStatusError as e:
+        logger.error(f"❌ خطا در Scraping {url}: {e.response.status_code} {e.response.reason_phrase}")
+        return []
+    except httpx.RequestError as e:
+        logger.error(f"❌ خطا در Scraping {url}: {e}")
+        return []
     except Exception as e:
         logger.error(f"❌ خطا در Scraping {url}: {e}")
-    return articles
+        return []
 
-
-def fetch_all_news() -> List[Dict]:
-    """
-    جمع‌آوری اخبار از همه منابع RSS و Scrape
-    """
-    all_articles: List[Dict] = []
+def collect_all_news():
+    """جمع‌آوری تمام اخبار از RSS و Scrape"""
+    all_news = []
 
     logger.info(f"🔄 شروع جمع‌آوری اخبار از منابع RSS ({len(DEFAULT_RSS_SOURCES)})...")
-    for url in DEFAULT_RSS_SOURCES:
-        articles = fetch_rss(url)
-        if not isinstance(articles, list):
-            articles = []
-        all_articles.extend(articles)
+    for rss in DEFAULT_RSS_SOURCES:
+        all_news.extend(fetch_rss_news(rss))
 
     logger.info(f"🔄 شروع جمع‌آوری اخبار از منابع Scrape ({len(DEFAULT_SCRAPE_SITES)})...")
-    for url in DEFAULT_SCRAPE_SITES:
-        articles = fetch_scrape(url)
-        if not isinstance(articles, list):
-            articles = []
-        all_articles.extend(articles)
+    for site in DEFAULT_SCRAPE_SITES:
+        all_news.extend(scrape_news(site))
 
-    logger.info(f"✅ جمعاً {len(all_articles)} خبر جدید جمع‌آوری شد")
-    return all_articles
+    logger.info(f"✅ جمعاً {len(all_news)} خبر جدید جمع‌آوری شد")
+    return all_news
 
-
-# تست مستقیم
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    news = fetch_all_news()
-    for i, item in enumerate(news[:5], 1):
-        print(f"{i}. {item['title']} ({item['source']})")
+    news = collect_all_news()
+    # برای تست، 5 خبر اول را چاپ می‌کنیم
+    for n in news[:5]:
+        print(n["title"], n["link"])
