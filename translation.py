@@ -8,7 +8,6 @@ import os
 import time
 import logging
 from typing import Optional, List
-from google import genai
 
 # -------------------------------------------------
 # Logger
