@@ -8,6 +8,9 @@ import os
 import time
 import logging
 from typing import Optional, List
+from google import genai
+
+client = genai.Client()
 
 # -------------------------------------------------
 # Logger
@@ -19,7 +22,7 @@ logger = logging.getLogger(__name__)
 # تلاش برای Gemini با مدل جدید
 # -------------------------------------------------
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL_NAME", "gemini-2.0-flash-lite")
+GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL_NAME", "gemini-3-flash-preview")
 gemini_model = None
 
 logger.info("="*60)
