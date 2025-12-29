@@ -3,120 +3,114 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-DB_FILE = Path("collected_news.json")
+# ================= BASE PATH =================
+BASE = Path("data")
+BASE.mkdir(exist_ok=True)
 
-def save_collected_news(news_list):
-    """ذخیره اخبار جمع‌آوری‌شده در فایل"""
-    with open(DB_FILE, "w", encoding="utf-8") as f:
-        json.dump(news_list, f, ensure_ascii=False, indent=2)
-
-def get_collected_news(limit=None):
-    """خواندن اخبار جمع‌آوری‌شده واقعی از فایل"""
-    if not DB_FILE.exists():
-        return []
-
-    with open(DB_FILE, "r", encoding="utf-8") as f:
-        news = json.load(f)
-
-    if limit:
-        return news[:limit]
-    return news
-BASE = "data"
-os.makedirs(BASE, exist_ok=True)
-
+# ================= FILES =================
 FILES = {
-    "settings": f"{BASE}/settings.json",
-    "sources": f"{BASE}/sources.json",
-    "sent": f"{BASE}/sent.json",
-    "topics": f"{BASE}/topics.json"
+    "settings": BASE / "settings.json",
+    "sources": BASE / "sources.json",
+    "sent": BASE / "sent.json",
+    "topics": BASE / "topics.json",
+    "news": BASE / "collected_news.json",
 }
 
-def _load(name, default):
-    if not os.path.exists(FILES[name]):
-        with open(FILES[name], "w", encoding="utf-8") as f:
-            json.dump(default, f, ensure_ascii=False)
-    with open(FILES[name], encoding="utf-8") as f:
+# ================= HELPERS =================
+def _ensure_file(path: Path, default):
+    if not path.exists():
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(default, f, ensure_ascii=False, indent=2)
+
+def _load_file(path: Path, default):
+    _ensure_file(path, default)
+    with open(path, encoding="utf-8") as f:
         return json.load(f)
 
-def _save(name, data):
-    with open(FILES[name], "w", encoding="utf-8") as f:
+def _save_file(path: Path, data):
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-# ============ SETTINGS ============
+# ================= SETTINGS =================
 def get_setting(key, default=None):
-    s = _load("settings", {})
-    return s.get(key, default)
+    data = _load_file(FILES["settings"], {})
+    return data.get(key, default)
 
 def set_setting(key, value):
-    s = _load("settings", {})
-    s[key] = value
-    _save("settings", s)
+    data = _load_file(FILES["settings"], {})
+    data[key] = value
+    _save_file(FILES["settings"], data)
 
-# ============ SOURCES (RSS & Scrape) ============
+# ================= SOURCES =================
 def get_sources():
-    """برگرداندن همه منابع"""
-    return _load("sources", {"rss": [], "scrape": []})
+    return _load_file(FILES["sources"], {"rss": [], "scrape": []})
 
 def get_rss_sources():
-    """فقط منابع RSS"""
-    data = get_sources()
-    return data.get("rss", [])
+    return get_sources().get("rss", [])
 
 def get_scrape_sources():
-    """فقط منابع Scrape"""
-    data = get_sources()
-    return data.get("scrape", [])
+    return get_sources().get("scrape", [])
 
 def add_rss_source(url):
-    """افزودن RSS"""
     data = get_sources()
     if url not in data["rss"]:
         data["rss"].append(url)
-        _save("sources", data)
+        _save_file(FILES["sources"], data)
 
 def add_scrape_source(url):
-    """افزودن Scrape"""
     data = get_sources()
     if url not in data["scrape"]:
         data["scrape"].append(url)
-        _save("sources", data)
+        _save_file(FILES["sources"], data)
 
 def remove_rss_source(url):
-    """حذف RSS"""
     data = get_sources()
     if url in data["rss"]:
         data["rss"].remove(url)
-        _save("sources", data)
+        _save_file(FILES["sources"], data)
 
 def remove_scrape_source(url):
-    """حذف Scrape"""
     data = get_sources()
     if url in data["scrape"]:
         data["scrape"].remove(url)
-        _save("sources", data)
+        _save_file(FILES["sources"], data)
 
-# ============ SENT ============
+# ================= SENT =================
 def is_sent(uid):
-    return uid in _load("sent", [])
+    return uid in _load_file(FILES["sent"], [])
 
 def mark_sent(uid):
-    data = _load("sent", [])
+    data = _load_file(FILES["sent"], [])
     if uid not in data:
         data.append(uid)
-        _save("sent", data)
+        _save_file(FILES["sent"], data)
 
-# ============ TOPICS (for trends) ============
+# ================= COLLECTED NEWS =================
+def save_collected_news(news_list):
+    _save_file(FILES["news"], news_list)
+
+def get_collected_news(limit=None):
+    news = _load_file(FILES["news"], [])
+    return news[:limit] if limit else news
+
+# ================= TOPICS / TRENDS =================
 def save_topic(topic, source):
-    data = _load("topics", [])
+    data = _load_file(FILES["topics"], [])
     today = datetime.utcnow().date().isoformat()
-    data.append({"topic": topic, "source": source, "date": today})
-    _save("topics", data)
+    data.append({
+        "topic": topic,
+        "source": source,
+        "date": today
+    })
+    _save_file(FILES["topics"], data)
 
-def daily_trends():
-    data = _load("topics", [])
+def daily_trends(min_sources=3):
+    data = _load_file(FILES["topics"], [])
     today = datetime.utcnow().date().isoformat()
     count = {}
-    for i in data:
-        if i["date"] == today:
-            count.setdefault(i["topic"], set()).add(i["source"])
-    return [k for k, v in count.items() if len(v) >= 3]
+
+    for item in data:
+        if item["date"] == today:
+            count.setdefault(item["topic"], set()).add(item["source"])
+
+    return [topic for topic, sources in count.items() if len(sources) >= min_sources]
