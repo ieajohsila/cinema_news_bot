@@ -68,46 +68,63 @@ async def fetch_and_send_news():
 
     min_importance = int(get_setting("min_importance", 1))
 
-    all_news = fetch_all_news()
-    if not all_news:
-        logger.info("📭 هیچ خبر جدیدی یافت نشد.")
-        return
+    try:
+        all_news = fetch_all_news()
+        if not all_news:
+            logger.info("📭 هیچ خبر جدیدی یافت نشد.")
+            return
 
-    sent_count = 0
-    today_str = now_tehran().strftime("%Y-%m-%d")
-    for item in all_news:
-        title_fa = translate_title(item['title'])
-        summary_fa = translate_title(item.get('summary', '')[:300]) if item.get('summary') else ""
-        category = classify_category(item['title'], item.get('summary', ''))
-        category_hashtag = f"#{category.split()[1]}" if ' ' in category else f"#{category}"
-        importance_emoji = {3:"🔥🔥🔥",2:"⭐⭐",1:"⭐",0:"•"}.get(item.get('importance',1),"⭐")
-        msg = (
-            f"{category} {category_hashtag}\n\n"
-            f"*{title_fa}*\n\n"
-            f"{summary_fa}\n\n"
-            f"🔗 [خبر اصلی]({item['link']})\n"
-            f"{importance_emoji} اهمیت: {item.get('importance',1)}/3"
-        )
-        try:
-            await bot.send_message(
-                chat_id=TARGET_CHAT_ID,
-                text=msg,
-                parse_mode="Markdown",
-                disable_web_page_preview=False
+        sent_count = 0
+        today_str = now_tehran().strftime("%Y-%m-%d")
+        
+        for item in all_news:
+            # 🔧 FIX: استفاده از 'link' به جای 'url'
+            link = item.get('link', item.get('url', ''))
+            if not link:
+                logger.warning(f"⚠️ خبر بدون لینک: {item.get('title', 'بدون عنوان')}")
+                continue
+                
+            title_fa = translate_title(item['title'])
+            summary_fa = translate_title(item.get('summary', '')[:300]) if item.get('summary') else ""
+            category = classify_category(item['title'], item.get('summary', ''))
+            category_hashtag = f"#{category.split()[1]}" if ' ' in category else f"#{category}"
+            importance_emoji = {3:"🔥🔥🔥",2:"⭐⭐",1:"⭐",0:"•"}.get(item.get('importance',1),"⭐")
+            
+            msg = (
+                f"{category} {category_hashtag}\n\n"
+                f"*{title_fa}*\n\n"
+                f"{summary_fa}\n\n"
+                f"🔗 [خبر اصلی]({link})\n"
+                f"{importance_emoji} اهمیت: {item.get('importance',1)}/3"
             )
-            sent_count += 1
-            save_topic(item['title'], item['url'], item.get('source','unknown'))
-            logger.info(f"✅ ارسال شد: {title_fa[:40]}...")
-            await asyncio.sleep(2)
-        except RetryAfter as e:
-            logger.warning(f"⏱️ Flood control: صبر {e.retry_after} ثانیه...")
-            await asyncio.sleep(e.retry_after + 1)
-        except TelegramError as e:
-            logger.error(f"❌ خطا در ارسال خبر: {e}")
+            
+            try:
+                await bot.send_message(
+                    chat_id=TARGET_CHAT_ID,
+                    text=msg,
+                    parse_mode="Markdown",
+                    disable_web_page_preview=False
+                )
+                sent_count += 1
+                save_topic(item['title'], link, item.get('source','unknown'))
+                logger.info(f"✅ ارسال شد: {title_fa[:40]}...")
+                await asyncio.sleep(2)
+            except RetryAfter as e:
+                logger.warning(f"⏱️ Flood control: صبر {e.retry_after} ثانیه...")
+                await asyncio.sleep(e.retry_after + 1)
+            except TelegramError as e:
+                logger.error(f"❌ خطا در ارسال خبر: {e}")
+            except Exception as e:
+                logger.error(f"❌ خطای غیرمنتظره: {e}")
 
-    logger.info(f"✅ {sent_count} خبر با موفقیت ارسال شد.")
-    set_setting("last_news_send", now_tehran().isoformat())
-    logger.info("="*60 + "\n")
+        logger.info(f"✅ {sent_count} خبر با موفقیت ارسال شد.")
+        set_setting("last_news_send", now_tehran().isoformat())
+        logger.info("="*60 + "\n")
+        
+    except Exception as e:
+        logger.error(f"❌ خطای کلی در fetch_and_send_news: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
 
 
 async def send_daily_trend():
@@ -148,26 +165,34 @@ async def send_daily_trend():
 
 async def schedule_daily_trend():
     while True:
-        trend_time = get_trend_time()
-        now = now_tehran()
-        target_time = TEHRAN_TZ.localize(datetime.combine(now.date(), trend_time))
-        if now >= target_time:
-            target_time += timedelta(days=1)
-        wait_seconds = (target_time - now).total_seconds()
-        set_setting("next_trend_time", target_time.isoformat())
-        logger.info(f"⏰ زمان باقی‌مانده تا ارسال ترند: {wait_seconds/3600:.1f} ساعت")
-        await asyncio.sleep(wait_seconds)
-        await send_daily_trend()
+        try:
+            trend_time = get_trend_time()
+            now = now_tehran()
+            target_time = TEHRAN_TZ.localize(datetime.combine(now.date(), trend_time))
+            if now >= target_time:
+                target_time += timedelta(days=1)
+            wait_seconds = (target_time - now).total_seconds()
+            set_setting("next_trend_time", target_time.isoformat())
+            logger.info(f"⏰ زمان باقی‌مانده تا ارسال ترند: {wait_seconds/3600:.1f} ساعت")
+            await asyncio.sleep(wait_seconds)
+            await send_daily_trend()
+        except Exception as e:
+            logger.error(f"❌ خطا در schedule_daily_trend: {e}")
+            await asyncio.sleep(3600)  # صبر 1 ساعت و تلاش مجدد
 
 
 async def schedule_news_fetching():
     while True:
-        await fetch_and_send_news()
-        interval_hours = get_fetch_interval()
-        next_fetch = now_tehran() + timedelta(hours=interval_hours)
-        set_setting("next_news_fetch", next_fetch.isoformat())
-        logger.info(f"😴 خواب به مدت {interval_hours} ساعت...")
-        await asyncio.sleep(interval_hours * 3600)
+        try:
+            await fetch_and_send_news()
+            interval_hours = get_fetch_interval()
+            next_fetch = now_tehran() + timedelta(hours=interval_hours)
+            set_setting("next_news_fetch", next_fetch.isoformat())
+            logger.info(f"😴 خواب به مدت {interval_hours} ساعت...")
+            await asyncio.sleep(interval_hours * 3600)
+        except Exception as e:
+            logger.error(f"❌ خطا در schedule_news_fetching: {e}")
+            await asyncio.sleep(3600)  # صبر 1 ساعت و تلاش مجدد
 
 
 async def run_scheduler():
