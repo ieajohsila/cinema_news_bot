@@ -16,13 +16,14 @@ from telegram.error import TelegramError, RetryAfter
 from news_fetcher import fetch_all_news
 from translation import translate_title
 from category import classify_category
-from news_ranker import rank_news  # ✅ اضافه شد
+from news_ranker import rank_news
 from trends import save_topic, find_daily_trends, format_trends_message
 from database import get_setting, set_setting, is_sent, mark_sent
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
+# 🔧 FIX: استفاده صحیح از os.getenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise RuntimeError("❌ BOT_TOKEN تنظیم نشده است")
@@ -38,17 +39,20 @@ def now_tehran():
 
 
 def get_fetch_interval():
-    return int(get_setting("news_fetch_interval_hours", 3))
+    # 🔧 FIX: تبدیل به int بعد از دریافت string
+    return int(get_setting("news_fetch_interval_hours", "3"))
 
 
 def get_trend_time():
-    trend_hour = int(get_setting("trend_hour", 23))
-    trend_minute = int(get_setting("trend_minute", 55))
+    # 🔧 FIX: تبدیل به int بعد از دریافت string
+    trend_hour = int(get_setting("trend_hour", "23"))
+    trend_minute = int(get_setting("trend_minute", "55"))
     return dtime(trend_hour, trend_minute)
 
 
 def get_min_trend_sources():
-    return int(get_setting("min_trend_sources", 2))
+    # 🔧 FIX: تبدیل به int بعد از دریافت string
+    return int(get_setting("min_trend_sources", "2"))
 
 
 def clean_text(text):
@@ -114,7 +118,8 @@ async def fetch_and_send_news():
         logger.error("❌ TARGET_CHAT_ID باید عدد صحیح باشد.")
         return
 
-    min_importance = int(get_setting("min_importance", 1))
+    # 🔧 FIX: تبدیل به int بعد از دریافت string
+    min_importance = int(get_setting("min_importance", "1"))
     logger.info(f"⭐ حداقل اهمیت: {min_importance}")
 
     try:
