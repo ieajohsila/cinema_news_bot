@@ -75,14 +75,20 @@ def remove_scrape_source(url):
         data["scrape"].remove(url)
         _save_file(FILES["sources"], data)
 
-# ================= SENT =================
+# ================= SENT (تکراری نبودن اخبار) =================
 def is_sent(uid):
-    return uid in _load_file(FILES["sent"], [])
+    """بررسی اینکه خبر قبلاً ارسال شده یا نه"""
+    data = _load_file(FILES["sent"], [])
+    return uid in data
 
 def mark_sent(uid):
+    """علامت‌گذاری خبر به عنوان ارسال شده"""
     data = _load_file(FILES["sent"], [])
     if uid not in data:
         data.append(uid)
+        # نگه داشتن فقط 1000 آیتم آخر (برای مدیریت حافظه)
+        if len(data) > 1000:
+            data = data[-1000:]
         _save_file(FILES["sent"], data)
 
 # ================= COLLECTED NEWS =================
@@ -94,23 +100,36 @@ def get_collected_news(limit=None):
     return news[:limit] if limit else news
 
 # ================= TOPICS / TRENDS =================
-def save_topic(topic, source):
+def save_topic(topic, url, source):
+    """ذخیره یک تاپیک برای تحلیل ترند"""
     data = _load_file(FILES["topics"], [])
     today = datetime.utcnow().date().isoformat()
     data.append({
         "topic": topic,
+        "url": url,
         "source": source,
         "date": today
     })
+    # نگه داشتن فقط 30 روز اخیر
+    cutoff = (datetime.utcnow().date() - timedelta(days=30)).isoformat()
+    data = [item for item in data if item.get("date", "") >= cutoff]
     _save_file(FILES["topics"], data)
 
 def daily_trends(min_sources=3):
+    """پیدا کردن ترندهای روزانه"""
     data = _load_file(FILES["topics"], [])
     today = datetime.utcnow().date().isoformat()
     count = {}
 
     for item in data:
-        if item["date"] == today:
-            count.setdefault(item["topic"], set()).add(item["source"])
+        if item.get("date") == today:
+            topic = item.get("topic", "")
+            source = item.get("source", "")
+            if topic:
+                if topic not in count:
+                    count[topic] = set()
+                count[topic].add(source)
 
-    return [topic for topic, sources in count.items() if len(sources) >= min_sources]
+    # فیلتر ترندها با حداقل تعداد منبع
+    trends = [topic for topic, sources in count.items() if len(sources) >= min_sources]
+    return trends
