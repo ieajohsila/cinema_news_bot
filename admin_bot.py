@@ -33,7 +33,8 @@ from translation import translate_title
 from category import classify_category
 from trends import find_daily_trends, format_trends_message
 
-ADMIN_ID = 81155585  # آیدی ادمین
+# 🔧 FIX: آیدی ادمین - این رو باید با آیدی تلگرام خودت عوض کنی
+ADMIN_ID = int(os.getenv("ADMIN_ID", "81155585"))
 
 # متغیر سراسری برای مدیریت حالت دریافت پیام
 user_states = {}
@@ -64,7 +65,7 @@ def get_main_menu_keyboard():
     ]
 
 # =========================
-# /start — پنل اصلی
+# /start – پنل اصلی
 # =========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update):
@@ -199,6 +200,11 @@ async def send_test_news(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # ارسال 3 خبر اول
         for item in ranked[:3]:
+            # 🔧 FIX: استفاده از 'link' به جای 'url'
+            link = item.get('link', item.get('url', ''))
+            if not link:
+                continue
+                
             # ترجمه
             title_fa = translate_title(item['title'])
             summary_fa = translate_title(item.get('summary', '')[:300]) if item.get('summary') else ""
@@ -221,7 +227,7 @@ async def send_test_news(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"{category} {category_hashtag}\n\n"
                 f"*{title_fa}*\n\n"
                 f"{summary_fa}\n\n"
-                f"🔗 [خبر اصلی]({item['link']})\n"
+                f"🔗 [خبر اصلی]({link})\n"
                 f"{importance_emoji} اهمیت: {item.get('importance', 1)}/3"
             )
             
@@ -258,7 +264,7 @@ async def send_test_trends(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # پیدا کردن ترندها
         min_sources = int(get_setting("min_trend_sources", "2"))
-        trends = find_daily_trends(all_news, min_sources=min_sources)
+        trends = find_daily_trends(min_sources=min_sources)
         
         if not trends:
             # اگر ترند پیدا نشد، خلاصه کلی بده
@@ -420,13 +426,13 @@ async def handle_scheduling_settings(update: Update, context: ContextTypes.DEFAU
     msg = "⏰ *تنظیمات زمان‌بندی*\n\n"
     msg += f"📰 بازه جمع‌آوری اخبار: هر {fetch_interval} ساعت\n"
     msg += f"📊 زمان ارسال ترند: {trend_hour}:{trend_minute}\n"
-    msg += f"🔢 حداقل منابع برای ترند: {min_trend_sources}\n\n"
+    msg += f"📢 حداقل منابع برای ترند: {min_trend_sources}\n\n"
     msg += "برای تغییر هر کدام روی دکمه مربوطه کلیک کنید:"
     
     keyboard = [
         [InlineKeyboardButton("⏱️ تغییر بازه جمع‌آوری", callback_data="change_fetch_interval")],
         [InlineKeyboardButton("🕐 تغییر زمان ترند", callback_data="change_trend_time")],
-        [InlineKeyboardButton("🔢 حداقل منابع ترند", callback_data="change_min_trend_sources")],
+        [InlineKeyboardButton("📢 حداقل منابع ترند", callback_data="change_min_trend_sources")],
         [InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_main")]
     ]
     
