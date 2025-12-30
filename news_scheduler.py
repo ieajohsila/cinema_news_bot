@@ -196,6 +196,9 @@ async def fetch_and_send_news():
                 mark_sent(str(news_id))
                 sent_count += 1
                 
+                # 🔧 FIX: ذخیره خبر در فایل روزانه برای تحلیل ترند
+                save_daily_news(item)
+                
                 # ذخیره در ترندها
                 save_topic(title_clean, link, item.get('source','unknown'))
                 
