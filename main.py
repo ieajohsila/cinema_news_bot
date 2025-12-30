@@ -73,7 +73,7 @@ def start_healthcheck_server():
         def health():
             return jsonify({'status': 'healthy', 'service': 'cinema_news_bot'}), 200
 
-        port = int(os.getenv('PORT', 8080))
+        port = int(os.getenv('PORT', '8080'))  # 🔧 FIX: اضافه کردن '' برای default
         logger.info(f"🏥 Healthcheck server running on port {port}")
         app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
@@ -87,10 +87,9 @@ def start_healthcheck_server():
 # ==============================
 async def start_news_scheduler():
     try:
-        from news_scheduler import start_scheduler
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, start_scheduler)
-        logger.info("✅ News scheduler started")
+        from news_scheduler import run_scheduler
+        # 🔧 FIX: اجرای مستقیم run_scheduler به جای start_scheduler
+        await run_scheduler()
     except ImportError as e:
         logger.error(f"❌ news_scheduler پیدا نشد: {e}")
     except Exception as e:
@@ -106,6 +105,11 @@ async def start_admin_bot():
         await admin_app.start()
         await admin_app.updater.start_polling(drop_pending_updates=True)
         logger.info("✅ Admin bot started")
+        
+        # نگه داشتن bot در حالت running
+        while True:
+            await asyncio.sleep(1)
+            
     except ImportError as e:
         logger.error(f"❌ admin_bot پیدا نشد: {e}")
     except Exception as e:
@@ -146,22 +150,25 @@ async def main_async():
     Thread(target=start_healthcheck_server, daemon=True).start()
 
     # اجرای همزمان admin_bot و news_scheduler
-    await asyncio.gather(
-        start_admin_bot(),
-        start_news_scheduler()
-    )
+    try:
+        await asyncio.gather(
+            start_admin_bot(),
+            start_news_scheduler()
+        )
+    except Exception as e:
+        logger.error(f"❌ خطا در اجرای سرویس‌ها: {e}", exc_info=True)
 
 # ==============================
 # Entry Point
 # ==============================
 def main():
-    asyncio.run(main_async())
-
-if __name__ == "__main__":
     try:
-        main()
+        asyncio.run(main_async())
     except KeyboardInterrupt:
         print("\n\n👋 ربات متوقف شد. خداحافظ!")
     except Exception as e:
         logger.error("❌ خطای غیرمنتظره", exc_info=True)
         print(f"\n❌ خطای غیرمنتظره: {e}")
+
+if __name__ == "__main__":
+    main()
