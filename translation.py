@@ -1,6 +1,6 @@
 """
 ماژول ترجمه هوشمند با دو سطح:
-1. Gemini (اولویت اول) - مدل gemini-2.0-flash-lite
+1. Gemini (اولویت اول) - API جدید
 2. Google Translate رایگان (fallback)
 """
 
@@ -16,12 +16,11 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # -------------------------------------------------
-# تلاش برای Gemini با مدل جدید
+# تلاش برای Gemini با API جدید
 # -------------------------------------------------
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-# 🔧 FIX: حذف پارامتر سوم - فقط 2 پارامتر مجاز است
-GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash")
-gemini_model = None
+GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL_NAME", "gemini-2.0-flash-exp")
+gemini_client = None
 
 logger.info("="*60)
 logger.info("🔧 شروع مقداردهی سیستم ترجمه...")
@@ -32,51 +31,54 @@ if GEMINI_API_KEY:
     logger.info(f"🎯 مدل مورد استفاده: {GEMINI_MODEL_NAME}")
     
     try:
-        import google.generativeai as genai
+        # 🔧 FIX: استفاده از API جدید google-genai
+        from google import genai
         
-        logger.info("⏳ پیکربندی Gemini...")
-        genai.configure(api_key=GEMINI_API_KEY)
+        logger.info("⏳ ایجاد کلاینت Gemini...")
+        os.environ["GEMINI_API_KEY"] = GEMINI_API_KEY
+        gemini_client = genai.Client(api_key=GEMINI_API_KEY)
         
-        logger.info(f"⏳ ساخت مدل {GEMINI_MODEL_NAME}...")
-        
-        # تلاش با مدل‌های مختلف
+        # تست سریع با مدل‌های مختلف
         models_to_try = [
-            GEMINI_MODEL_NAME,  # اولویت اول: مدل از ENV
-            "gemini-2.0-flash-exp",  # مدل experimental
+            GEMINI_MODEL_NAME,
+            "gemini-2.0-flash-exp",
             "gemini-1.5-flash",
             "gemini-1.5-pro",
-            "gemini-pro"
         ]
         
-        model_initialized = False
+        model_works = False
         for model_name in models_to_try:
             try:
-                logger.info(f"   🔍 امتحان مدل: {model_name}")
-                gemini_model = genai.GenerativeModel(model_name)
+                logger.info(f"   🔍 تست مدل: {model_name}")
+                response = gemini_client.models.generate_content(
+                    model=model_name,
+                    contents="Say OK"
+                )
                 
-                # تست سریع
-                test = gemini_model.generate_content("Say OK")
-                
-                if test and test.text:
-                    logger.info(f"✅ مدل {model_name} کار می‌کنه!")
-                    logger.info(f"   تست: Say OK → {test.text.strip()}")
-                    model_initialized = True
-                    GEMINI_MODEL_NAME = model_name  # ذخیره مدل موفق
+                if response and response.text:
+                    logger.info(f"✅ مدل {model_name} کار می‌کند!")
+                    logger.info(f"   تست: Say OK → {response.text.strip()}")
+                    GEMINI_MODEL_NAME = model_name
+                    model_works = True
                     break
+                    
             except Exception as e:
-                logger.debug(f"   ❌ مدل {model_name} کار نکرد: {str(e)[:50]}")
+                logger.debug(f"   ❌ مدل {model_name}: {str(e)[:50]}")
                 continue
         
-        if not model_initialized:
-            raise Exception("هیچ مدل Gemini قابل استفاده‌ای یافت نشد")
+        if not model_works:
+            raise Exception("هیچ مدل Gemini کار نکرد")
         
         logger.info("✅ Gemini فعال و آماده است")
             
+    except ImportError:
+        logger.error("❌ کتابخانه google-genai نصب نیست!")
+        logger.error("   نصب کنید: pip install google-genai")
+        gemini_client = None
     except Exception as e:
         logger.error(f"❌ خطا در Gemini: {e}")
-        logger.error(f"   نوع خطا: {type(e).__name__}")
         logger.warning("⚠️ Gemini غیرفعال شد، fallback به Google Translate")
-        gemini_model = None
+        gemini_client = None
 else:
     logger.warning("⚠️ GEMINI_API_KEY تنظیم نشده")
 
@@ -104,9 +106,9 @@ except Exception as e:
 # -------------------------------------------------
 # انتخاب استراتژی
 # -------------------------------------------------
-if gemini_model and google_translator:
+if gemini_client and google_translator:
     logger.info("🎯 استراتژی: Gemini (اولویت اول) + Google Translate (پشتیبان)")
-elif gemini_model:
+elif gemini_client:
     logger.info("🎯 استراتژی: فقط Gemini")
 elif google_translator:
     logger.info("🎯 استراتژی: فقط Google Translate")
@@ -120,8 +122,8 @@ logger.info("="*60 + "\n")
 # ترجمه با Gemini (اولویت اول)
 # -------------------------------------------------
 def translate_with_gemini(text: str) -> Optional[str]:
-    """ترجمه با Gemini - اولویت اول"""
-    if not gemini_model:
+    """ترجمه با Gemini - API جدید"""
+    if not gemini_client:
         return None
     
     try:
@@ -133,7 +135,10 @@ English text:
 
 Persian translation:"""
         
-        response = gemini_model.generate_content(prompt)
+        response = gemini_client.models.generate_content(
+            model=GEMINI_MODEL_NAME,
+            contents=prompt
+        )
         
         if response and response.text:
             result = response.text.strip()
@@ -190,25 +195,25 @@ def translate_to_persian(text: str) -> Optional[str]:
     
     text = text.strip()
     
-    logger.info(f"🌐 ترجمه: {text[:80]}...")
+    logger.debug(f"🌐 ترجمه: {text[:80]}...")
     
     # اولویت 1: Gemini
-    if gemini_model:
+    if gemini_client:
         logger.debug("   📍 تلاش با Gemini...")
         result = translate_with_gemini(text)
         if result:
-            logger.info(f"✅ Gemini: {result[:80]}...")
+            logger.debug(f"✅ Gemini: {result[:80]}...")
             return result
-        logger.warning("⚠️ Gemini ناموفق، fallback به Google Translate...")
+        logger.debug("⚠️ Gemini ناموفق، fallback به Google Translate...")
     
     # اولویت 2: Google Translate
     if google_translator:
         logger.debug("   📍 تلاش با Google Translate...")
         result = translate_with_google(text)
         if result:
-            logger.info(f"✅ Google Translate: {result[:80]}...")
+            logger.debug(f"✅ Google Translate: {result[:80]}...")
             return result
-        logger.warning("⚠️ Google Translate هم ناموفق بود")
+        logger.debug("⚠️ Google Translate هم ناموفق بود")
     
     logger.error(f"❌ ترجمه کاملاً ناموفق: {text[:50]}...")
     return None
