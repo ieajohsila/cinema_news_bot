@@ -1,9 +1,3 @@
-"""
-🎬 ربات خبری سینما - نسخه امن و همزمان
-این نسخه admin_bot و news_scheduler را در یک event loop اجرا می‌کند
-و healthcheck، cleanup و flood control را مدیریت می‌کند
-"""
-
 import os
 import asyncio
 import logging
@@ -12,30 +6,31 @@ from threading import Thread
 from telegram import Bot
 from telegram.error import TelegramError
 
-# ==============================
+# ======================
 # Logging
-# ==============================
+# ======================
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("cinema_bot")
 
-# ==============================
-# Cleanup Bot
-# ==============================
+
+# ======================
+# Cleanup
+# ======================
 async def cleanup_bot():
-    bot_token = os.getenv('BOT_TOKEN')
-    if not bot_token:
-        logger.error("❌ BOT_TOKEN پیدا نشد!")
+    token = os.getenv("BOT_TOKEN")
+    if not token:
+        logger.error("❌ BOT_TOKEN تنظیم نشده")
         return False
 
-    bot = Bot(token=bot_token)
+    bot = Bot(token=token)
 
     try:
-        logger.info("🧹 حذف webhook...")
+        logger.info("🧹 حذف webhook و pending updates...")
+
         await bot.delete_webhook(drop_pending_updates=True)
-        logger.info("✅ Webhook حذف شد")
 
         updates = await bot.get_updates(timeout=2)
         if updates:
@@ -43,7 +38,7 @@ async def cleanup_bot():
             await bot.get_updates(offset=last_id + 1, timeout=2)
             logger.info(f"✅ {len(updates)} pending update پاک شد")
         else:
-            logger.info("✅ هیچ pending update وجود ندارد")
+            logger.info("✅ pending update وجود ندارد")
 
         me = await bot.get_me()
         logger.info(f"✅ اتصال موفق: @{me.username}")
@@ -52,123 +47,117 @@ async def cleanup_bot():
     except TelegramError as e:
         logger.error(f"❌ خطا در cleanup: {e}")
         return False
-    except Exception as e:
-        logger.error(f"❌ خطای غیرمنتظره: {e}")
+    except Exception:
+        logger.exception("❌ خطای غیرمنتظره در cleanup")
         return False
 
-# ==============================
-# Healthcheck Server
-# ==============================
-def start_healthcheck_server():
+
+# ======================
+# Healthcheck
+# ======================
+def start_healthcheck():
     try:
         from flask import Flask, jsonify
 
         app = Flask(__name__)
 
-        @app.route('/')
+        @app.route("/")
         def home():
-            return "🎬 Cinema News Bot is running!"
+            return "Cinema News Bot is running"
 
-        @app.route('/health')
+        @app.route("/health")
         def health():
-            return jsonify({'status': 'healthy', 'service': 'cinema_news_bot'}), 200
+            return jsonify({"status": "ok"}), 200
 
-        port = int(os.getenv('PORT', '8080'))  # 🔧 FIX: اضافه کردن '' برای default
-        logger.info(f"🏥 Healthcheck server running on port {port}")
-        app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+        port = int(os.getenv("PORT", "8080"))
+        logger.info(f"🏥 Healthcheck on port {port}")
+        app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
     except ImportError:
-        logger.warning("⚠️ Flask نصب نیست. Healthcheck غیرفعال شد.")
-    except Exception as e:
-        logger.error(f"❌ خطا در healthcheck: {e}")
+        logger.warning("⚠️ Flask نصب نیست، healthcheck غیرفعال شد")
+    except Exception:
+        logger.exception("❌ خطا در healthcheck")
 
-# ==============================
-# اجرا کننده scheduler
-# ==============================
-async def start_news_scheduler():
-    try:
-        from news_scheduler import run_scheduler
-        # 🔧 FIX: اجرای مستقیم run_scheduler به جای start_scheduler
-        await run_scheduler()
-    except ImportError as e:
-        logger.error(f"❌ news_scheduler پیدا نشد: {e}")
-    except Exception as e:
-        logger.error(f"❌ خطا در اجرای news_scheduler: {e}")
 
-# ==============================
-# اجرا کننده admin_bot
-# ==============================
-async def start_admin_bot():
-    try:
-        from admin_bot import app as admin_app
-        await admin_app.initialize()
-        await admin_app.start()
-        await admin_app.updater.start_polling(drop_pending_updates=True)
-        logger.info("✅ Admin bot started")
-        
-        # نگه داشتن bot در حالت running
-        while True:
-            await asyncio.sleep(1)
-            
-    except ImportError as e:
-        logger.error(f"❌ admin_bot پیدا نشد: {e}")
-    except Exception as e:
-        logger.error(f"❌ خطا در اجرای admin_bot: {e}")
+# ======================
+# Admin Bot Runner
+# ======================
+async def run_admin_bot():
+    from admin_bot import create_admin_app
 
-# ==============================
+    while True:
+        try:
+            app = create_admin_app()
+
+            logger.info("🚀 Admin bot starting...")
+            await app.initialize()
+            await app.start()
+
+            await app.run_polling(
+                drop_pending_updates=True,
+                close_loop=False
+            )
+
+        except Exception:
+            logger.exception("❌ Admin bot crash کرد، تلاش مجدد در 5 ثانیه...")
+            await asyncio.sleep(5)
+
+
+# ======================
+# News Scheduler Runner
+# ======================
+async def run_news_scheduler():
+    while True:
+        try:
+            from news_scheduler import run_scheduler
+            logger.info("📰 News scheduler starting...")
+            await run_scheduler()
+
+        except Exception:
+            logger.exception("❌ Scheduler crash کرد، ری‌استارت در 10 ثانیه...")
+            await asyncio.sleep(10)
+
+
+# ======================
 # Main Async
-# ==============================
+# ======================
 async def main_async():
-    print("\n" + "="*70)
-    print("🎬 ربات خبری سینما - راه‌اندازی کامل")
-    print("="*70)
+    logger.info("=" * 60)
+    logger.info("🎬 Cinema News Bot – Hybrid Production Version")
+    logger.info("=" * 60)
 
-    BOT_TOKEN = os.getenv("BOT_TOKEN")
-    if not BOT_TOKEN:
-        print("❌ BOT_TOKEN تنظیم نشده است!")
-        return
-    print("✅ BOT_TOKEN یافت شد")
+    if not os.getenv("BOT_TOKEN"):
+        raise RuntimeError("BOT_TOKEN تنظیم نشده")
 
-    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-    if not GEMINI_API_KEY:
-        print("⚠️ GEMINI_API_KEY تنظیم نشده - ترجمه غیرفعال است")
-    else:
-        print("✅ GEMINI_API_KEY یافت شد")
+    if not os.getenv("GEMINI_API_KEY"):
+        logger.warning("⚠️ GEMINI_API_KEY تنظیم نشده – ترجمه غیرفعال است")
 
-    print("\n🧹 پاکسازی و آماده‌سازی ربات...")
-    cleanup_success = await cleanup_bot()
-    if not cleanup_success:
-        print("⚠️ پاکسازی کامل نبود، ادامه می‌دهیم...")
+    await cleanup_bot()
 
-    print("\n📋 سرویس‌های فعال:")
-    print("  1️⃣ Admin Bot")
-    print("  2️⃣ News Scheduler")
-    print("  3️⃣ Healthcheck Server (8080)")
-    print("\n🛑 خروج: CTRL+C\n")
+    Thread(target=start_healthcheck, daemon=True).start()
 
-    # Healthcheck server در thread جدا
-    Thread(target=start_healthcheck_server, daemon=True).start()
+    logger.info("📋 سرویس‌های فعال:")
+    logger.info("  • Admin Bot")
+    logger.info("  • News Scheduler")
+    logger.info("  • Healthcheck Server")
 
-    # اجرای همزمان admin_bot و news_scheduler
-    try:
-        await asyncio.gather(
-            start_admin_bot(),
-            start_news_scheduler()
-        )
-    except Exception as e:
-        logger.error(f"❌ خطا در اجرای سرویس‌ها: {e}", exc_info=True)
+    await asyncio.gather(
+        run_admin_bot(),
+        run_news_scheduler()
+    )
 
-# ==============================
+
+# ======================
 # Entry Point
-# ==============================
+# ======================
 def main():
     try:
         asyncio.run(main_async())
     except KeyboardInterrupt:
-        print("\n\n👋 ربات متوقف شد. خداحافظ!")
-    except Exception as e:
-        logger.error("❌ خطای غیرمنتظره", exc_info=True)
-        print(f"\n❌ خطای غیرمنتظره: {e}")
+        logger.info("👋 Shutdown")
+    except Exception:
+        logger.exception("❌ Fatal error")
+
 
 if __name__ == "__main__":
     main()
