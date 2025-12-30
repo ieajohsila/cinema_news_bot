@@ -19,7 +19,8 @@ logger = logging.getLogger(__name__)
 # تلاش برای Gemini با مدل جدید
 # -------------------------------------------------
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash", "gemini-2.5-flash-lite")
+# 🔧 FIX: حذف پارامتر سوم - فقط 2 پارامتر مجاز است
+GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash")
 gemini_model = None
 
 logger.info("="*60)
