@@ -61,17 +61,20 @@ def start_healthcheck():
 async def run_admin_bot():
     from admin_bot import create_admin_app
 
-    app = create_admin_app()
+    while True:
+        try:
+            app = create_admin_app()
+            logger.info("🚀 Admin bot starting...")
 
-    logger.info("🚀 Admin bot starting...")
-    await app.initialize()
-    await app.start()
-    await app.bot.initialize()
+            await app.run_polling(
+                drop_pending_updates=True,
+                close_loop=False
+            )
 
-    await app.run_polling(
-        drop_pending_updates=True,
-        close_loop=False
-    )
+        except Exception:
+            logger.exception("❌ Admin bot crash کرد، تلاش مجدد در 5 ثانیه...")
+            await asyncio.sleep(5)
+
 
 
 # ======================
