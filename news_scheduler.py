@@ -118,7 +118,6 @@ async def fetch_and_send_news():
         logger.error("❌ TARGET_CHAT_ID باید عدد صحیح باشد.")
         return
 
-    # 🔧 FIX: تبدیل به int بعد از دریافت string
     min_importance = int(get_setting("min_importance", "1"))
     logger.info(f"⭐ حداقل اهمیت: {min_importance}")
 
@@ -128,7 +127,7 @@ async def fetch_and_send_news():
             logger.info("📭 هیچ خبر جدیدی یافت نشد.")
             return
 
-        # 🔧 FIX: فیلتر کردن اخبار نامعتبر
+        # فیلتر کردن اخبار نامعتبر
         valid_news = [item for item in all_news if is_valid_news(item)]
         logger.info(f"✅ {len(valid_news)} خبر معتبر از {len(all_news)} آیتم")
 
@@ -136,7 +135,7 @@ async def fetch_and_send_news():
             logger.info("📭 هیچ خبر معتبری یافت نشد.")
             return
 
-        # 🔧 FIX: رتبه‌بندی اخبار بر اساس اهمیت
+        # رتبه‌بندی اخبار بر اساس اهمیت
         ranked_news = rank_news(valid_news, min_importance=min_importance)
         logger.info(f"🎯 {len(ranked_news)} خبر با اهمیت حداقل {min_importance}")
 
@@ -154,13 +153,13 @@ async def fetch_and_send_news():
                 logger.warning(f"⚠️ خبر بدون لینک: {item.get('title', 'بدون عنوان')}")
                 continue
             
-            # چک کردن ارسال قبلی
-            news_id = hash(link)
-            if is_sent(str(news_id)):
+            # 🔧 FIX: چک کردن ارسال قبلی
+            news_id = str(hash(link))
+            if is_sent(news_id):
                 skipped_count += 1
                 continue
             
-            # 🔧 FIX: تمیز کردن متن‌ها
+            # تمیز کردن متن‌ها
             title_clean = clean_text(item['title'])
             summary_clean = clean_text(item.get('summary', '')[:300])
             
@@ -192,8 +191,8 @@ async def fetch_and_send_news():
                     disable_web_page_preview=False
                 )
                 
-                # ثبت ارسال شده
-                mark_sent(str(news_id))
+                # 🔧 FIX: ثبت ارسال شده
+                mark_sent(news_id)
                 sent_count += 1
                 
                 # 🔧 FIX: ذخیره خبر در فایل روزانه برای تحلیل ترند
