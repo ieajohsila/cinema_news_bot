@@ -17,7 +17,7 @@ from news_fetcher import fetch_all_news
 from translation import translate_title
 from category import classify_category
 from news_ranker import rank_news
-from trends import save_topic, save_daily_news, find_daily_trends, format_trends_message
+from trends import save_topic, find_daily_trends, format_trends_message, save_daily_news
 from database import get_setting, set_setting, is_sent, mark_sent
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
