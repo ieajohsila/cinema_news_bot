@@ -61,21 +61,25 @@ def start_healthcheck():
 async def run_admin_bot():
     from admin_bot import create_admin_app
 
-    while True:
-        try:
-            app = create_admin_app()
-            logger.info("🚀 Admin bot starting...")
+    app = create_admin_app()
+    logger.info("🚀 Admin bot starting...")
 
-            await app.run_polling(
-                drop_pending_updates=True,
-                close_loop=False
-            )
+    await app.initialize()
+    await app.start()
+    await app.bot.initialize()
 
-        except Exception:
-            logger.exception("❌ Admin bot crash کرد، تلاش مجدد در 5 ثانیه...")
-            await asyncio.sleep(5)
+    try:
+        # polling غیرمسدودکننده
+        await app.updater.start_polling(drop_pending_updates=True)
 
+        # نگه داشتن task زنده
+        while True:
+            await asyncio.sleep(3600)
 
+    finally:
+        await app.updater.stop()
+        await app.stop()
+        await app.shutdown()
 
 # ======================
 # Scheduler
