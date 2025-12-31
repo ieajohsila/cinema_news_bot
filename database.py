@@ -1,6 +1,6 @@
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 # ================= BASE PATH =================
@@ -33,6 +33,15 @@ def _save_file(path: Path, data):
 
 # ================= SETTINGS =================
 def get_setting(key, default=None):
+    """
+    🔧 FIX: اول از ENV بخوان، بعد از فایل
+    """
+    # 1. چک کردن Environment Variable
+    env_value = os.getenv(key)
+    if env_value is not None:
+        return env_value
+    
+    # 2. چک کردن فایل تنظیمات
     data = _load_file(FILES["settings"], {})
     return data.get(key, default)
 
