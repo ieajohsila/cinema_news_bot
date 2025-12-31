@@ -1,12 +1,12 @@
-"""
+""
 اسکریپت راه‌اندازی ربات
 1. مقداردهی اولیه منابع (در صورت نیاز)
 2. اجرای ربات
 """
 
 import os
-from database import get_rss_sources, get_scrape_sources, add_rss_source, add_scrape_source
-from default_sources import DEFAULT_RSS_SOURCES, DEFAULT_SCRAPE_SITES
+from database import get_rss_sources, add_rss_source
+from default_sources import DEFAULT_RSS_SOURCES
 
 def initialize_if_needed():
     """اگر منابع خالی باشد، منابع پیش‌فرض را اضافه می‌کند"""
@@ -16,14 +16,12 @@ def initialize_if_needed():
     print("="*70)
     
     current_rss = get_rss_sources()
-    current_scrape = get_scrape_sources()
     
     print(f"📊 وضعیت فعلی:")
     print(f"   📰 RSS: {len(current_rss)} منبع")
-    print(f"   🕷️  Scrape: {len(current_scrape)} منبع")
     
     # اگر هیچ منبعی نداریم، منابع پیش‌فرض رو اضافه کن
-    if len(current_rss) == 0 and len(current_scrape) == 0:
+    if len(current_rss) == 0:
         print("\n⚠️  هیچ منبعی یافت نشد. در حال افزودن منابع پیش‌فرض...")
         
         # افزودن RSS
@@ -36,6 +34,13 @@ def initialize_if_needed():
             except Exception as e:
                 print(f"   ⚠️  خطا در افزودن {url}: {e}")
         
+        print(f"\n✅ مقداردهی کامل شد!")
+        print(f"   📰 {added_rss} منبع RSS اضافه شد")
+    else:
+        print("\n✅ منابع قبلاً تنظیم شده‌اند.")
+    
+    print("="*70 + "\n")
+    
         # افزودن Scrape
         added_scrape = 0
         for url in DEFAULT_SCRAPE_SITES:
@@ -53,6 +58,7 @@ def initialize_if_needed():
         print("\n✅ منابع قبلاً تنظیم شده‌اند.")
     
     print("="*70 + "\n")
+
 
 
 if __name__ == "__main__":
