@@ -1,6 +1,8 @@
 # admin_bot.py
 import os
 import asyncio
+import logging
+
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -37,6 +39,8 @@ from translation import translate_title
 from category import classify_category
 from trends import find_daily_trends, format_trends_message
 
+
+logger = logging.getLogger("admin_bot")
 
 ADMIN_ID = int(os.getenv("ADMIN_ID", "81155585"))
 user_states = {}
@@ -165,9 +169,13 @@ async def receive_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ======================
-# App Factory
+# App Factory (HYBRID SAFE)
 # ======================
 def create_admin_app():
+    """
+    ⚙️ Hybrid-compatible factory
+    بدون تغییر منطق، فقط سازگار با main.py
+    """
     token = os.getenv("BOT_TOKEN")
     if not token:
         raise RuntimeError("BOT_TOKEN تنظیم نشده")
@@ -177,5 +185,7 @@ def create_admin_app():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_message))
+
+    logger.info("🧩 Admin bot application created")
 
     return app
