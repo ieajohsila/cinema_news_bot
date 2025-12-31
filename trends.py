@@ -30,14 +30,25 @@ def save_daily_news(news_item):
         # خواندن فایل فعلی
         if os.path.exists(today_file):
             with open(today_file, "r", encoding="utf-8") as f:
-                news_list = json.load(f)
+                content = json.load(f)
+                # 🔧 FIX: بررسی نوع داده
+                if isinstance(content, dict):
+                    news_list = []  # اگر dict بود، از نو شروع کن
+                else:
+                    news_list = content
         else:
             news_list = []
+        
+        # 🔧 FIX: چک کردن تکراری نبودن
+        url = news_item.get("link", news_item.get("url", ""))
+        if url and any(n.get("url") == url for n in news_list):
+            logger.debug(f"⚠️ خبر تکراری: {url[:50]}...")
+            return  # اگر تکراری بود، ذخیره نکن
         
         # اضافه کردن خبر جدید
         news_list.append({
             "title": news_item.get("title", ""),
-            "url": news_item.get("link", news_item.get("url", "")),
+            "url": url,
             "source": news_item.get("source", "unknown"),
             "summary": news_item.get("summary", "")[:200],
             "timestamp": datetime.now().isoformat()
@@ -51,6 +62,8 @@ def save_daily_news(news_item):
         
     except Exception as e:
         logger.error(f"❌ خطا در ذخیره خبر روزانه: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
 
 
 def load_topics():
