@@ -1,8 +1,6 @@
 import os
-import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Application,
     ApplicationBuilder,
     CommandHandler,
     CallbackQueryHandler,
@@ -20,25 +18,28 @@ from database import (
     remove_scrape_source,
     get_setting,
     set_setting,
+    get_collected_news,
+    save_collected_news,
+    daily_trends,
 )
 from importance import (
     get_all_rules,
     get_level_keywords,
     add_keyword,
     remove_keyword,
+    add_new_level,
 )
 from status_handler import get_status_message
 from news_fetcher import fetch_all_news
-from news_ranker import rank_news, generate_daily_trend
+from news_ranker import rank_news
 from translation import translate_title
 from category import classify_category
-from trends import find_daily_trends, format_trends_message
+from datetime import datetime
 
-# آیدی ادمین
-ADMIN_ID = int(os.getenv("ADMIN_ID", "81155585"))
+ADMIN_ID = 81155585  # آیدی ادمین
 
-# متغیر سراسری برای مدیریت حالت دریافت پیام
-user_states = {}
+# حالت‌های ورودی
+USER_STATE = {}
 
 # =========================
 # ابزار کمکی
@@ -61,12 +62,12 @@ def get_main_menu_keyboard():
         [InlineKeyboardButton("⚙️ تنظیم حداقل اهمیت", callback_data="set_min_importance")],
         [InlineKeyboardButton("🔧 مدیریت کلمات کلیدی", callback_data="manage_keywords")],
         [InlineKeyboardButton("⏰ تنظیمات زمان‌بندی", callback_data="scheduling_settings")],
-        [InlineKeyboardButton("📰 تست خبر (3 خبر)", callback_data="send_test_news")],
-        [InlineKeyboardButton("📈 تست ترند", callback_data="send_test_trends")],
+        [InlineKeyboardButton("📰 تست خبر واقعی", callback_data="send_test_news")],
+        [InlineKeyboardButton("📈 تست ترند واقعی", callback_data="send_test_trends")],
     ]
 
 # =========================
-# /start – پنل اصلی
+# /start — پنل اصلی
 # =========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update):
@@ -135,7 +136,6 @@ async def show_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
 
-
 # =========================
 # نمایش منابع
 # =========================
@@ -143,337 +143,332 @@ async def list_sources(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    rss_sources = get_rss_sources()
-    scrape_sources = get_scrape_sources()
+    rss = get_rss_sources()
+    scrape = get_scrape_sources()
     
-    msg = "📋 *منابع فعال:*\n\n"
-    msg += f"📰 *RSS ({len(rss_sources)} منبع):*\n"
+    msg = "📋 *منابع فعال*\n\n"
     
-    if rss_sources:
-        for i, url in enumerate(rss_sources, 1):
-            msg += f"{i}. `{url[:50]}...`\n"
-    else:
-        msg += "   هیچ منبع RSS تنظیم نشده\n"
+    msg += f"📰 *RSS ({len(rss)} منبع):*\n"
+    for i, url in enumerate(rss, 1):
+        msg += f"{i}. `{url}`\n"
     
-    msg += f"\n🕷️ *Scraping ({len(scrape_sources)} منبع):*\n"
-    
-    if scrape_sources:
-        for i, url in enumerate(scrape_sources, 1):
-            msg += f"{i}. `{url[:50]}...`\n"
-    else:
-        msg += "   هیچ منبع Scraping تنظیم نشده\n"
+    msg += f"\n🕷️ *Scraping ({len(scrape)} منبع):*\n"
+    for i, url in enumerate(scrape, 1):
+        msg += f"{i}. `{url}`\n"
     
     keyboard = [[InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_main")]]
     
-    await query.edit_message_text(
-        msg,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown"
-    )
-
+    try:
+        await query.edit_message_text(
+            msg,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+    except:
+        await query.message.reply_text(
+            msg,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
 
 # =========================
-# تست خبر
+# تست خبر واقعی
 # =========================
-async def send_test_news(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    await query.message.reply_text("⏳ در حال جمع‌آوری اخبار از منابع...")
+async def send_test_news(query):
+    """جمع‌آوری اخبار جدید و نمایش یکی از آنها"""
+    await query.answer("⏳ در حال جمع‌آوری اخبار...")
     
     try:
+        # جمع‌آوری اخبار
+        await query.message.reply_text("🔄 در حال جمع‌آوری اخبار از منابع...")
         all_news = fetch_all_news()
         
         if not all_news:
-            await query.message.reply_text("❌ هیچ خبر جدیدی یافت نشد.")
+            await query.message.reply_text("❌ هیچ خبری یافت نشد.")
             return
         
-        min_importance = int(get_setting("min_importance", "1"))
+        # رتبه‌بندی
+        min_importance = int(get_setting("min_importance", 1))
         ranked = rank_news(all_news, min_importance=min_importance)
         
         if not ranked:
             await query.message.reply_text(f"❌ هیچ خبری با اهمیت حداقل {min_importance} پیدا نشد.")
             return
         
-        await query.message.reply_text(f"✅ {len(ranked)} خبر پیدا شد. ارسال 3 خبر اول...")
+        # ذخیره اخبار
+        save_collected_news(ranked)
         
-        for item in ranked[:3]:
-            link = item.get('link', item.get('url', ''))
-            if not link:
-                continue
-                
-            title_fa = translate_title(item['title'])
-            summary_fa = translate_title(item.get('summary', '')[:300]) if item.get('summary') else ""
-            
-            category = classify_category(item['title'], item.get('summary', ''))
-            category_hashtag = category.split()[1] if ' ' in category else category
-            category_hashtag = f"#{category_hashtag}"
-            
-            importance_emoji = {
-                3: "🔥🔥🔥",
-                2: "⭐⭐",
-                1: "⭐",
-                0: "•"
-            }.get(item.get('importance', 1), "⭐")
-            
-            msg = (
-                f"{category} {category_hashtag}\n\n"
-                f"*{title_fa}*\n\n"
-                f"{summary_fa}\n\n"
-                f"🔗 [خبر اصلی]({link})\n"
-                f"{importance_emoji} اهمیت: {item.get('importance', 1)}/3"
-            )
-            
-            await query.message.reply_text(
-                msg,
-                parse_mode="Markdown",
-                disable_web_page_preview=False
-            )
-            
-            await asyncio.sleep(1)
+        # نمایش اولین خبر
+        n = ranked[0]
         
-        await query.message.reply_text("✅ تست خبر کامل شد!")
+        # ترجمه
+        title_fa = translate_title(n['title'])
+        summary_fa = translate_title(n.get('summary', '')[:300]) if n.get('summary') else ""
+        
+        # دسته‌بندی
+        category = classify_category(n['title'], n.get('summary', ''))
+        
+        # ایموجی اهمیت
+        importance_emoji = {
+            3: "🔥🔥🔥",
+            2: "⭐⭐",
+            1: "⭐",
+            0: "•"
+        }.get(n.get('importance', 1), "⭐")
+        
+        msg = f"📰 *خبر تست واقعی*\n\n"
+        msg += f"🏷️ دسته: {category}\n\n"
+        msg += f"*{title_fa}*\n\n"
+        if summary_fa:
+            msg += f"{summary_fa}\n\n"
+        msg += f"🔗 [مشاهده خبر]({n['link']})\n"
+        msg += f"{importance_emoji} اهمیت: {n.get('importance', 1)}/3\n\n"
+        msg += f"✅ جمعاً {len(ranked)} خبر جمع‌آوری شد"
+
+        await query.message.reply_text(msg, parse_mode="Markdown", disable_web_page_preview=False)
         
     except Exception as e:
-        await query.message.reply_text(f"❌ خطا در جمع‌آوری اخبار: {str(e)}")
+        await query.message.reply_text(f"❌ خطا: {str(e)}")
 
 
 # =========================
-# تست ترند
+# تست ترند واقعی
 # =========================
-async def send_test_trends(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    await query.message.reply_text("⏳ در حال تحلیل ترندها...")
+async def send_test_trends(query):
+    """محاسبه و نمایش ترندهای واقعی از اخبار امروز"""
+    await query.answer("⏳ در حال تحلیل ترندها...")
     
     try:
-        all_news = fetch_all_news()
-        
-        if not all_news:
-            await query.message.reply_text("❌ هیچ خبری برای تحلیل ترند وجود ندارد.")
-            return
-        
-        min_sources = int(get_setting("min_trend_sources", "2"))
-        trends = find_daily_trends(min_sources=min_sources)
+        # دریافت اخبار امروز
+        today = datetime.utcnow().date().isoformat()
+        trends = daily_trends(today)
         
         if not trends:
-            summary = generate_daily_trend(all_news)
-            await query.message.reply_text(
-                f"📊 *تحلیل اخبار امروز*\n\n{summary}",
-                parse_mode="Markdown"
-            )
-        else:
-            trend_msg = format_trends_message(trends)
-            await query.message.reply_text(
-                trend_msg,
-                parse_mode="Markdown",
-                disable_web_page_preview=True
-            )
+            await query.message.reply_text("❌ هیچ ترندی امروز شناسایی نشد.\n\n💡 ترند = خبری که از 2 منبع یا بیشتر آمده باشد")
+            return
         
-        await query.message.reply_text("✅ تست ترند کامل شد!")
+        msg = "📈 *ترندهای امروز سینما*\n\n"
+        msg += f"📅 {today}\n\n"
+        
+        for i, trend in enumerate(trends[:10], 1):
+            emoji = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}️⃣"
+            
+            msg += f"{emoji} *{trend['topic'][:80]}*\n"
+            msg += f"   📰 منابع: {', '.join(trend['sources'][:3])}\n"
+            
+            if len(trend['sources']) > 3:
+                msg += f"   ➕ و {len(trend['sources']) - 3} منبع دیگر\n"
+            
+            if trend['links'] and trend['links'][0]:
+                msg += f"   🔗 [مشاهده]({trend['links'][0]})\n"
+            
+            msg += "\n"
+        
+        msg += f"━━━━━━━━━━━━━━━━━\n"
+        msg += f"🔥 {len(trends)} ترند فعال"
+
+        await query.message.reply_text(msg, parse_mode="Markdown", disable_web_page_preview=True)
         
     except Exception as e:
-        await query.message.reply_text(f"❌ خطا در تحلیل ترند: {str(e)}")
+        await query.message.reply_text(f"❌ خطا: {str(e)}")
 
 
-# سایر handlerها... (باقی کد مثل قبل)
-async def handle_add_rss(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# =========================
+# تنظیم کانال مقصد
+# =========================
+async def set_target_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    user_states[ADMIN_ID] = "waiting_rss"
-    await query.message.reply_text(
-        "📰 لطفاً آدرس RSS را ارسال کنید:\nمثال: https://site.com/feed\n\nبرای لغو /cancel بزنید"
-    )
+    
+    USER_STATE[ADMIN_ID] = "waiting_target"
+    
+    msg = "🎯 *تنظیم کانال مقصد*\n\n"
+    msg += "لطفاً Chat ID کانال یا گروه خود را ارسال کنید.\n\n"
+    msg += "💡 برای دریافت Chat ID:\n"
+    msg += "1. ربات را به کانال اضافه کنید\n"
+    msg += "2. از @userinfobot استفاده کنید\n\n"
+    msg += "مثال: `-1001234567890`"
+    
+    keyboard = [[InlineKeyboardButton("❌ لغو", callback_data="back_to_main")]]
+    
+    try:
+        await query.edit_message_text(
+            msg,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+    except:
+        await query.message.reply_text(
+            msg,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
 
-async def handle_add_scrape(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+# =========================
+# تنظیم حداقل اهمیت
+# =========================
+async def set_min_importance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    user_states[ADMIN_ID] = "waiting_scrape"
-    await query.message.reply_text(
-        "🕷️ لطفاً آدرس صفحه را ارسال کنید:\nمثال: https://site.com/news\n\nبرای لغو /cancel بزنید"
-    )
+    
+    USER_STATE[ADMIN_ID] = "waiting_importance"
+    
+    msg = "⚙️ *تنظیم حداقل اهمیت*\n\n"
+    msg += "سطح اهمیت را وارد کنید (0 تا 3):\n\n"
+    msg += "0️⃣ کم‌اهمیت (rumor, speculation)\n"
+    msg += "1️⃣ معمولی (review, interview)\n"
+    msg += "2️⃣ مهم (trailer, box office)\n"
+    msg += "3️⃣ فوری (breaking, Oscar)\n\n"
+    msg += f"📊 سطح فعلی: {get_setting('min_importance', '1')}"
+    
+    keyboard = [[InlineKeyboardButton("❌ لغو", callback_data="back_to_main")]]
+    
+    try:
+        await query.edit_message_text(
+            msg,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+    except:
+        await query.message.reply_text(
+            msg,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
 
-async def handle_remove_source(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+# =========================
+# افزودن RSS
+# =========================
+async def add_rss_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    user_states[ADMIN_ID] = "waiting_remove"
-    await query.message.reply_text(
-        "❌ لطفاً آدرس منبعی که می‌خواهید حذف کنید را ارسال کنید:\n\nبرای لغو /cancel بزنید"
-    )
+    
+    USER_STATE[ADMIN_ID] = "waiting_rss"
+    
+    msg = "➕ *افزودن منبع RSS*\n\n"
+    msg += "لطفاً URL فید RSS را ارسال کنید.\n\n"
+    msg += "مثال:\n`https://variety.com/feed/`"
+    
+    keyboard = [[InlineKeyboardButton("❌ لغو", callback_data="back_to_main")]]
+    
+    try:
+        await query.edit_message_text(
+            msg,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+    except:
+        await query.message.reply_text(
+            msg,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
 
-async def handle_set_target(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+# =========================
+# افزودن Scrape
+# =========================
+async def add_scrape_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    user_states[ADMIN_ID] = "waiting_target"
-    await query.message.reply_text(
-        "🎯 لطفاً آیدی عددی کانال/گروه را ارسال کنید:\nمثال: -1001234567890\n\n💡 نکته: ربات باید admin کانال باشد\nبرای لغو /cancel بزنید"
-    )
+    
+    USER_STATE[ADMIN_ID] = "waiting_scrape"
+    
+    msg = "➕ *افزودن منبع Scraping*\n\n"
+    msg += "لطفاً URL صفحه خبری را ارسال کنید.\n\n"
+    msg += "مثال:\n`https://www.hollywoodreporter.com/news/`"
+    
+    keyboard = [[InlineKeyboardButton("❌ لغو", callback_data="back_to_main")]]
+    
+    try:
+        await query.edit_message_text(
+            msg,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+    except:
+        await query.message.reply_text(
+            msg,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
 
-async def handle_set_min_importance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+# =========================
+# حذف منبع
+# =========================
+async def remove_source_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    user_states[ADMIN_ID] = "waiting_importance"
-    current = get_setting("min_importance", "1")
-    await query.message.reply_text(
-        f"⚙️ حداقل اهمیت فعلی: *{current}*\n\nعدد جدید را ارسال کنید (0 تا 3):\n• 0: همه اخبار\n• 1: اخبار معمولی\n• 2: اخبار مهم\n• 3: اخبار فوری\n\nبرای لغو /cancel بزنید",
-        parse_mode="Markdown"
-    )
+    
+    rss = get_rss_sources()
+    scrape = get_scrape_sources()
+    
+    if not rss and not scrape:
+        await query.message.reply_text("❌ هیچ منبعی برای حذف وجود ندارد.")
+        return
+    
+    keyboard = []
+    
+    for url in rss:
+        keyboard.append([InlineKeyboardButton(f"❌ {url[:50]}", callback_data=f"remove_rss:{url}")])
+    
+    for url in scrape:
+        keyboard.append([InlineKeyboardButton(f"❌ {url[:50]}", callback_data=f"remove_scrape:{url}")])
+    
+    keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_main")])
+    
+    try:
+        await query.edit_message_text(
+            "❌ *حذف منبع*\n\nروی منبع مورد نظر کلیک کنید:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+    except:
+        await query.message.reply_text(
+            "❌ *حذف منبع*\n\nروی منبع مورد نظر کلیک کنید:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
 
-async def handle_manage_keywords(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    rules = get_all_rules()
-    msg = "🔧 *مدیریت کلمات کلیدی اهمیت*\n\n"
-    for level in sorted(rules.keys(), key=lambda x: int(x), reverse=True):
-        data = rules[level]
-        msg += f"⭐ *سطح {level} ({data['name']}):*\n"
-        keywords = data.get('keywords', [])
-        if keywords:
-            msg += f"   {len(keywords)} کلمه: {', '.join(keywords[:5])}"
-            if len(keywords) > 5:
-                msg += f" و {len(keywords)-5} کلمه دیگر"
-        else:
-            msg += "   هیچ کلمه‌ای تنظیم نشده"
-        msg += "\n\n"
-    keyboard = [
-        [InlineKeyboardButton("➕ افزودن کلمه", callback_data="add_keyword")],
-        [InlineKeyboardButton("❌ حذف کلمه", callback_data="remove_keyword")],
-        [InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_main")]
-    ]
-    await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
-async def handle_scheduling_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    fetch_interval = get_setting("news_fetch_interval_hours", "3")
-    trend_hour = get_setting("trend_hour", "23")
-    trend_minute = get_setting("trend_minute", "55")
-    min_trend_sources = get_setting("min_trend_sources", "2")
-    msg = "⏰ *تنظیمات زمان‌بندی*\n\n"
-    msg += f"📰 بازه جمع‌آوری اخبار: هر {fetch_interval} ساعت\n"
-    msg += f"📊 زمان ارسال ترند: {trend_hour}:{trend_minute}\n"
-    msg += f"📢 حداقل منابع برای ترند: {min_trend_sources}\n\n"
-    msg += "برای تغییر هر کدام روی دکمه مربوطه کلیک کنید:"
-    keyboard = [
-        [InlineKeyboardButton("⏱️ تغییر بازه جمع‌آوری", callback_data="change_fetch_interval")],
-        [InlineKeyboardButton("🕐 تغییر زمان ترند", callback_data="change_trend_time")],
-        [InlineKeyboardButton("📢 حداقل منابع ترند", callback_data="change_min_trend_sources")],
-        [InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_main")]
-    ]
-    await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-
+# =========================
+# دریافت پیام‌های متنی
+# =========================
 async def receive_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update):
         return
-    text = update.message.text
+    
     user_id = update.effective_user.id
-    state = user_states.get(user_id)
-    if text == "/cancel":
-        user_states.pop(user_id, None)
-        await update.message.reply_text("❌ عملیات لغو شد.")
-        keyboard = get_main_menu_keyboard()
-        await update.message.reply_text("🎬 پنل مدیریت", reply_markup=InlineKeyboardMarkup(keyboard))
-        return
-    if state == "waiting_rss":
-        if text.startswith("http"):
-            add_rss_source(text)
-            await update.message.reply_text(f"✅ RSS اضافه شد:\n`{text}`", parse_mode="Markdown")
-        else:
-            await update.message.reply_text("❌ آدرس نامعتبر است.")
-        user_states.pop(user_id, None)
-    elif state == "waiting_scrape":
-        if text.startswith("http"):
-            add_scrape_source(text)
-            await update.message.reply_text(f"✅ Scraping اضافه شد:\n`{text}`", parse_mode="Markdown")
-        else:
-            await update.message.reply_text("❌ آدرس نامعتبر است.")
-        user_states.pop(user_id, None)
-    elif state == "waiting_remove":
-        if text in get_rss_sources():
-            remove_rss_source(text)
-            await update.message.reply_text("✅ RSS حذف شد.")
-        elif text in get_scrape_sources():
-            remove_scrape_source(text)
-            await update.message.reply_text("✅ Scraping حذف شد.")
-        else:
-            await update.message.reply_text("❌ منبع یافت نشد.")
-        user_states.pop(user_id, None)
-    elif state == "waiting_target":
+    text = update.message.text.strip()
+    
+    state = USER_STATE.get(user_id)
+    
+    if state == "waiting_target":
         try:
             chat_id = int(text)
             set_setting("TARGET_CHAT_ID", str(chat_id))
-            await update.message.reply_text(f"✅ کانال مقصد تنظیم شد: `{chat_id}`", parse_mode="Markdown")
+            
+            # تست ارسال
             try:
-                from telegram import Bot
-                bot = Bot(token=os.getenv("BOT_TOKEN"))
-                await bot.send_message(chat_id=chat_id, text="✅ ربات با موفقیت به کانال متصل شد!")
-                await update.message.reply_text("✅ پیام تست ارسال شد!")
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="✅ کانال مقصد با موفقیت تنظیم شد!"
+                )
+                await update.message.reply_text(
+                    f"✅ کانال مقصد تنظیم شد: `{chat_id}`",
+                    parse_mode="Markdown"
+                )
             except Exception as e:
-                await update.message.reply_text(f"⚠️ کانال تنظیم شد ولی ارسال تست ناموفق بود:\n{str(e)}")
-        except:
-            await update.message.reply_text("❌ آیدی نامعتبر است.")
-        user_states.pop(user_id, None)
-    elif state == "waiting_importance":
-        try:
-            level = int(text)
-            if 0 <= level <= 3:
-                set_setting("min_importance", str(level))
-                await update.message.reply_text(f"✅ حداقل اهمیت به {level} تغییر کرد.")
-            else:
-                await update.message.reply_text("❌ عدد باید بین 0 تا 3 باشد.")
-        except:
-            await update.message.reply_text("❌ عدد نامعتبر است.")
-        user_states.pop(user_id, None)
-
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    if not is_admin(update):
-        return
-    data = query.data
-    if data == "back_to_main":
-        await show_main_menu(query)
-    elif data == "status":
-        await show_status(update, context)
-    elif data == "list_sources":
-        await list_sources(update, context)
-    elif data == "send_test_news":
-        await send_test_news(update, context)
-    elif data == "send_test_trends":
-        await send_test_trends(update, context)
-    elif data == "add_rss":
-        await handle_add_rss(update, context)
-    elif data == "add_scrape":
-        await handle_add_scrape(update, context)
-    elif data == "remove_source":
-        await handle_remove_source(update, context)
-    elif data == "set_target":
-        await handle_set_target(update, context)
-    elif data == "set_min_importance":
-        await handle_set_min_importance(update, context)
-    elif data == "manage_keywords":
-        await handle_manage_keywords(update, context)
-    elif data == "scheduling_settings":
-        await handle_scheduling_settings(update, context)
-
-# =========================
-# ساخت Application
-# =========================
-def create_app():
-    BOT_TOKEN = os.getenv("BOT_TOKEN")
-    if not BOT_TOKEN:
-        raise RuntimeError("❌ BOT_TOKEN تنظیم نشده است")
-
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_message))
-    return app
-
-# 🔧 FIX: Export برای استفاده در main.py
-app = create_app()
-
-if __name__ == "__main__":
-    print("🤖 ربات در حال اجرا...")
-    app.run_polling()
+                await update.message.reply_text(
+                    f"⚠️ Chat ID ذخیره شد اما ارسال تست ناموفق بود.\n\n"
+                    f"خطا: {str(e)}\n\n"
+                    f"💡 مطمئن شوید ربات Admin کانال است."
+                )
+            
+            USER_STATE.pop(user_id, None)
+            
+        except ValueError:
+            await update.message.reply_text("❌ Chat ID باید عدد باش
