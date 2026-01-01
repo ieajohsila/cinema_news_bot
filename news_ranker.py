@@ -235,12 +235,12 @@ if __name__ == "__main__":
         {
             "title": "Breaking: Director Christopher Nolan wins Oscar for Best Picture",
             "summary": "Historic achievement in cinema",
-            "published": datetime.now(),
+            "published": datetime.now().isoformat(),
         },
         {
             "title": "New Marvel movie trailer released",
             "summary": "Fans excited for upcoming blockbuster",
-            "published": datetime.now() - timedelta(hours=5),
+            "published": (datetime.now() - timedelta(hours=5)).isoformat(),
         }
     ]
     
