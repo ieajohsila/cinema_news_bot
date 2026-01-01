@@ -435,6 +435,79 @@ async def remove_source_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 # =========================
+# مدیریت کلمات کلیدی
+# =========================
+async def manage_keywords_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    rules = get_all_rules()
+    
+    msg = "🔧 *مدیریت کلمات کلیدی*\n\n"
+    
+    for level in sorted(rules.keys(), key=lambda x: int(x)):
+        rule = rules[level]
+        msg += f"*سطح {level} ({rule['name']}):*\n"
+        msg += f"تعداد کلمات: {len(rule['keywords'])}\n\n"
+    
+    keyboard = [
+        [InlineKeyboardButton("➕ افزودن کلمه", callback_data="add_keyword")],
+        [InlineKeyboardButton("❌ حذف کلمه", callback_data="remove_keyword")],
+        [InlineKeyboardButton("📋 نمایش کلمات", callback_data="show_keywords")],
+        [InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_main")]
+    ]
+    
+    try:
+        await query.edit_message_text(
+            msg,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+    except:
+        await query.message.reply_text(
+            msg,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+
+
+# =========================
+# تنظیمات زمان‌بندی
+# =========================
+async def scheduling_settings_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    fetch_interval = get_setting("news_fetch_interval_hours", "3")
+    trend_hour = get_setting("trend_hour", "23")
+    trend_minute = get_setting("trend_minute", "55")
+    
+    msg = "⏰ *تنظیمات زمان‌بندی*\n\n"
+    msg += f"📰 بازه جمع‌آوری اخبار: هر {fetch_interval} ساعت\n"
+    msg += f"📊 ارسال ترند روزانه: {trend_hour}:{trend_minute}\n\n"
+    msg += "برای تغییر تنظیمات، یکی از دکمه‌ها را انتخاب کنید:"
+    
+    keyboard = [
+        [InlineKeyboardButton("⏱️ تغییر بازه اخبار", callback_data="change_fetch_interval")],
+        [InlineKeyboardButton("🕐 تغییر زمان ترند", callback_data="change_trend_time")],
+        [InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_main")]
+    ]
+    
+    try:
+        await query.edit_message_text(
+            msg,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+    except:
+        await query.message.reply_text(
+            msg,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+
+
+# =========================
 # دریافت پیام‌های متنی
 # =========================
 async def receive_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -471,4 +544,118 @@ async def receive_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             USER_STATE.pop(user_id, None)
             
         except ValueError:
-            await update.message.reply_text("❌ Chat ID باید عدد باش
+            await update.message.reply_text("❌ Chat ID باید عدد باشد. دوباره تلاش کنید:")
+    
+    elif state == "waiting_importance":
+        try:
+            level = int(text)
+            if 0 <= level <= 3:
+                set_setting("min_importance", str(level))
+                await update.message.reply_text(f"✅ حداقل اهمیت به {level} تنظیم شد.")
+                USER_STATE.pop(user_id, None)
+            else:
+                await update.message.reply_text("❌ عدد باید بین 0 تا 3 باشد:")
+        except ValueError:
+            await update.message.reply_text("❌ لطفاً یک عدد وارد کنید:")
+    
+    elif state == "waiting_rss":
+        if text.startswith("http"):
+            add_rss_source(text)
+            await update.message.reply_text(f"✅ منبع RSS اضافه شد:\n`{text}`", parse_mode="Markdown")
+            USER_STATE.pop(user_id, None)
+        else:
+            await update.message.reply_text("❌ URL باید با http شروع شود:")
+    
+    elif state == "waiting_scrape":
+        if text.startswith("http"):
+            add_scrape_source(text)
+            await update.message.reply_text(f"✅ منبع Scraping اضافه شد:\n`{text}`", parse_mode="Markdown")
+            USER_STATE.pop(user_id, None)
+        else:
+            await update.message.reply_text("❌ URL باید با http شروع شود:")
+
+
+# =========================
+# Callback دکمه‌ها
+# =========================
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if not is_admin(update):
+        return
+
+    data = query.data
+
+    if data == "back_to_main":
+        USER_STATE.pop(ADMIN_ID, None)
+        await show_main_menu(query)
+    
+    elif data == "status":
+        await show_status(update, context)
+    
+    elif data == "list_sources":
+        await list_sources(update, context)
+    
+    elif data == "send_test_news":
+        await send_test_news(query)
+    
+    elif data == "send_test_trends":
+        await send_test_trends(query)
+    
+    elif data == "set_target":
+        await set_target_channel(update, context)
+    
+    elif data == "set_min_importance":
+        await set_min_importance(update, context)
+    
+    elif data == "add_rss":
+        await add_rss_handler(update, context)
+    
+    elif data == "add_scrape":
+        await add_scrape_handler(update, context)
+    
+    elif data == "remove_source":
+        await remove_source_handler(update, context)
+    
+    elif data == "manage_keywords":
+        await manage_keywords_handler(update, context)
+    
+    elif data == "scheduling_settings":
+        await scheduling_settings_handler(update, context)
+    
+    elif data.startswith("remove_rss:"):
+        url = data.replace("remove_rss:", "")
+        remove_rss_source(url)
+        await query.message.reply_text(f"✅ منبع RSS حذف شد:\n`{url}`", parse_mode="Markdown")
+        await show_main_menu(query)
+    
+    elif data.startswith("remove_scrape:"):
+        url = data.replace("remove_scrape:", "")
+        remove_scrape_source(url)
+        await query.message.reply_text(f"✅ منبع Scraping حذف شد:\n`{url}`", parse_mode="Markdown")
+        await show_main_menu(query)
+
+
+# =========================
+# ساخت Application
+# =========================
+def create_app():
+    BOT_TOKEN = os.getenv("BOT_TOKEN")
+    if not BOT_TOKEN:
+        raise RuntimeError("❌ BOT_TOKEN تنظیم نشده است")
+
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_message))
+
+    return app
+
+
+app = create_app()
+
+if __name__ == "__main__":
+    print("🤖 ربات در حال اجرا...")
+    app.run_polling()
