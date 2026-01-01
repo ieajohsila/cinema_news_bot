@@ -73,7 +73,7 @@ def start_healthcheck_server():
         def health():
             return jsonify({'status': 'healthy', 'service': 'cinema_news_bot'}), 200
 
-        port = int(os.getenv('PORT', '8080'))
+        port = int(os.getenv('PORT', 8080))
         logger.info(f"🏥 Healthcheck server running on port {port}")
         app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
@@ -130,12 +130,6 @@ async def main_async():
         print("⚠️ GEMINI_API_KEY تنظیم نشده - ترجمه غیرفعال است")
     else:
         print("✅ GEMINI_API_KEY یافت شد")
-    
-    TARGET_CHAT_ID = os.getenv("TARGET_CHAT_ID")
-    if TARGET_CHAT_ID:
-        print(f"✅ TARGET_CHAT_ID یافت شد: {TARGET_CHAT_ID}")
-    else:
-        print("⚠️ TARGET_CHAT_ID تنظیم نشده")
 
     print("\n🧹 پاکسازی و آماده‌سازی ربات...")
     cleanup_success = await cleanup_bot()
