@@ -1,6 +1,6 @@
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 BASE = "data"
@@ -155,7 +155,7 @@ def save_collected_news(news_list):
             existing_links.add(news.get("link"))
     
     # حذف اخبار قدیمی‌تر از 7 روز
-    cutoff_date = (datetime.utcnow().date() - datetime.timedelta(days=7)).isoformat()
+    cutoff_date = (datetime.utcnow().date() - timedelta(days=7)).isoformat()
     all_news = {date: news for date, news in all_news.items() if date >= cutoff_date}
     
     _save("collected_news", all_news)
