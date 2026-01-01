@@ -1,221 +1,184 @@
 import json
 import os
-import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
+BASE = "data"
+os.makedirs(BASE, exist_ok=True)
 
-# ================= BASE PATH =================
-BASE = Path("data")
-BASE.mkdir(exist_ok=True)
-
-# فایل جمع‌آوری اخبار
-DB_FILE = BASE / "collected_news.json"
-
-# ================= FILES =================
 FILES = {
-    "settings": BASE / "settings.json",
-    "sources": BASE / "sources.json",
-    "sent": BASE / "sent.json",
-    "topics": BASE / "topics.json",
-    "news": BASE / "collected_news.json",
+    "settings": f"{BASE}/settings.json",
+    "sources": f"{BASE}/sources.json",
+    "sent": f"{BASE}/sent.json",
+    "topics": f"{BASE}/topics.json",
+    "collected_news": f"{BASE}/collected_news.json"
 }
 
-# پوشه اخبار روزانه
-DAILY_NEWS_DIR = BASE / "daily_news"
-DAILY_NEWS_DIR.mkdir(exist_ok=True)
-
-# ================= HELPERS =================
-def _ensure_file(path: Path, default):
-    if not path.exists():
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(default, f, ensure_ascii=False, indent=2)
-
-def _load_file(path: Path, default):
-    _ensure_file(path, default)
-    with open(path, encoding="utf-8") as f:
+def _load(name, default):
+    if not os.path.exists(FILES[name]):
+        with open(FILES[name], "w", encoding="utf-8") as f:
+            json.dump(default, f, ensure_ascii=False)
+    with open(FILES[name], encoding="utf-8") as f:
         return json.load(f)
 
-def _save_file(path: Path, data):
-    with open(path, "w", encoding="utf-8") as f:
+def _save(name, data):
+    with open(FILES[name], "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-# ================= SETTINGS =================
+# ============ SETTINGS ============
 def get_setting(key, default=None):
-    """🔧 FIX: اول از ENV بخوان، بعد از فایل"""
-    # 1. چک کردن Environment Variable
-    env_value = os.getenv(key)
-    if env_value is not None:
-        return env_value
-    
-    # 2. چک کردن فایل تنظیمات
-    data = _load_file(FILES["settings"], {})
-    return data.get(key, default)
+    s = _load("settings", {})
+    return s.get(key, default)
 
 def set_setting(key, value):
-    data = _load_file(FILES["settings"], {})
-    data[key] = value
-    _save_file(FILES["settings"], data)
+    s = _load("settings", {})
+    s[key] = value
+    _save("settings", s)
 
-# ================= SOURCES =================
+# ============ SOURCES (RSS & Scrape) ============
 def get_sources():
-    return _load_file(FILES["sources"], {"rss": [], "scrape": []})
+    """برگرداندن همه منابع"""
+    return _load("sources", {"rss": [], "scrape": []})
 
 def get_rss_sources():
-    return get_sources().get("rss", [])
+    """فقط منابع RSS"""
+    data = get_sources()
+    return data.get("rss", [])
 
 def get_scrape_sources():
-    return get_sources().get("scrape", [])
+    """فقط منابع Scrape"""
+    data = get_sources()
+    return data.get("scrape", [])
 
 def add_rss_source(url):
+    """افزودن RSS"""
     data = get_sources()
     if url not in data["rss"]:
         data["rss"].append(url)
-        _save_file(FILES["sources"], data)
+        _save("sources", data)
 
 def add_scrape_source(url):
+    """افزودن Scrape"""
     data = get_sources()
     if url not in data["scrape"]:
         data["scrape"].append(url)
-        _save_file(FILES["sources"], data)
+        _save("sources", data)
 
 def remove_rss_source(url):
+    """حذف RSS"""
     data = get_sources()
     if url in data["rss"]:
         data["rss"].remove(url)
-        _save_file(FILES["sources"], data)
+        _save("sources", data)
 
 def remove_scrape_source(url):
+    """حذف Scrape"""
     data = get_sources()
     if url in data["scrape"]:
         data["scrape"].remove(url)
-        _save_file(FILES["sources"], data)
+        _save("sources", data)
 
-# ================= SENT (تکراری نبودن اخبار) =================
+# ============ SENT ============
 def is_sent(uid):
-    """بررسی اینکه خبر قبلاً ارسال شده یا نه"""
-    try:
-        data = _load_file(FILES["sent"], [])
-        return str(uid) in [str(x) for x in data]
-    except Exception as e:
-        logger.error(f"خطا در is_sent: {e}")
-        return False
+    return uid in _load("sent", [])
 
 def mark_sent(uid):
-    """علامت‌گذاری خبر به عنوان ارسال شده"""
-    try:
-        data = _load_file(FILES["sent"], [])
-        uid_str = str(uid)
-        
-        if uid_str not in [str(x) for x in data]:
-            data.append(uid_str)
-            
-            # نگه داشتن فقط 2000 آیتم آخر
-            if len(data) > 2000:
-                data = data[-2000:]
-            
-            _save_file(FILES["sent"], data)
-            return True
-        return False
-    except Exception as e:
-        logger.error(f"خطا در mark_sent: {e}")
-        return False
+    data = _load("sent", [])
+    if uid not in data:
+        data.append(uid)
+        _save("sent", data)
 
-# ================= COLLECTED NEWS =================
-def save_collected_news(news_list):
-    """ذخیره اخبار جمع‌آوری‌شده در فایل اصلی"""
-    _save_file(FILES["news"], news_list)
-
-def get_collected_news(limit=None):
-    """خواندن اخبار جمع‌آوری‌شده"""
-    news = _load_file(FILES["news"], [])
-    return news[:limit] if limit else news
-
-# ================= DAILY NEWS (برای ترندها) =================
-def save_daily_news_item(news_item):
-    """ذخیره یک خبر در فایل روزانه"""
-    today = datetime.now().strftime("%Y-%m-%d")
-    today_file = DAILY_NEWS_DIR / f"{today}.json"
-    
-    try:
-        # خواندن فایل فعلی
-        if today_file.exists():
-            with open(today_file, "r", encoding="utf-8") as f:
-                content = json.load(f)
-                news_list = content if isinstance(content, list) else []
-        else:
-            news_list = []
-        
-        # چک تکراری نبودن
-        url = news_item.get("link", news_item.get("url", ""))
-        if url and any(n.get("url") == url for n in news_list):
-            return
-        
-        # اضافه کردن خبر جدید
-        news_list.append({
-            "title": news_item.get("title", ""),
-            "url": url,
-            "source": news_item.get("source", "unknown"),
-            "summary": news_item.get("summary", "")[:200],
-            "timestamp": datetime.now().isoformat()
-        })
-        
-        # ذخیره
-        with open(today_file, "w", encoding="utf-8") as f:
-            json.dump(news_list, f, ensure_ascii=False, indent=2)
-        
-    except Exception as e:
-        logger.error(f"خطا در ذخیره خبر روزانه: {e}")
-
-def get_daily_news(date=None):
-    """خواندن اخبار یک روز خاص"""
-    if date is None:
-        date = datetime.now().strftime("%Y-%m-%d")
-    
-    today_file = DAILY_NEWS_DIR / f"{date}.json"
-    
-    if not today_file.exists():
-        return []
-    
-    try:
-        with open(today_file, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        logger.error(f"خطا در خواندن اخبار روزانه: {e}")
-        return []
-
-# ================= TOPICS / TRENDS =================
-def save_topic(topic, url, source):
-    """ذخیره یک تاپیک برای تحلیل ترند"""
-    data = _load_file(FILES["topics"], [])
-    today = datetime.utcnow().date().isoformat()
+# ============ TOPICS (for trends) ============
+def save_topic(topic, link, source, date):
+    """ذخیره topic برای تحلیل ترند"""
+    data = _load("topics", [])
     data.append({
         "topic": topic,
-        "url": url,
+        "link": link,
         "source": source,
-        "date": today
+        "date": date
     })
-    # نگه داشتن فقط 30 روز اخیر
-    cutoff = (datetime.utcnow().date() - timedelta(days=30)).isoformat()
-    data = [item for item in data if item.get("date", "") >= cutoff]
-    _save_file(FILES["topics"], data)
+    _save("topics", data)
 
-def daily_trends(min_sources=3):
-    """پیدا کردن ترندهای روزانه"""
-    data = _load_file(FILES["topics"], [])
-    today = datetime.utcnow().date().isoformat()
+def daily_trends(date=None):
+    """دریافت ترندهای یک روز خاص"""
+    if date is None:
+        date = datetime.utcnow().date().isoformat()
+    
+    data = _load("topics", [])
     count = {}
-
+    
     for item in data:
-        if item.get("date") == today:
-            topic = item.get("topic", "")
-            source = item.get("source", "")
-            if topic:
-                if topic not in count:
-                    count[topic] = set()
-                count[topic].add(source)
-
-    # فیلتر ترندها با حداقل تعداد منبع
-    trends = [topic for topic, sources in count.items() if len(sources) >= min_sources]
+        if item["date"] == date:
+            topic = item["topic"]
+            source = item["source"]
+            
+            if topic not in count:
+                count[topic] = {"sources": set(), "links": []}
+            
+            count[topic]["sources"].add(source)
+            count[topic]["links"].append(item.get("link", ""))
+    
+    # فقط اخباری که از 2 منبع یا بیشتر آمده‌اند
+    trends = []
+    for topic, info in count.items():
+        if len(info["sources"]) >= 2:
+            trends.append({
+                "topic": topic,
+                "source_count": len(info["sources"]),
+                "sources": list(info["sources"]),
+                "links": info["links"][:3]  # فقط 3 لینک اول
+            })
+    
+    # مرتب‌سازی بر اساس تعداد منابع
+    trends.sort(key=lambda x: x["source_count"], reverse=True)
     return trends
+
+# ============ COLLECTED NEWS ============
+def save_collected_news(news_list):
+    """ذخیره اخبار جمع‌آوری‌شده روزانه"""
+    today = datetime.utcnow().date().isoformat()
+    
+    # بارگذاری داده‌های قبلی
+    all_news = _load("collected_news", {})
+    
+    # اضافه کردن اخبار امروز
+    if today not in all_news:
+        all_news[today] = []
+    
+    # اضافه کردن اخبار جدید (بدون تکرار)
+    existing_links = {news.get("link") for news in all_news[today]}
+    
+    for news in news_list:
+        if news.get("link") not in existing_links:
+            all_news[today].append(news)
+            existing_links.add(news.get("link"))
+    
+    # حذف اخبار قدیمی‌تر از 7 روز
+    cutoff_date = (datetime.utcnow().date() - datetime.timedelta(days=7)).isoformat()
+    all_news = {date: news for date, news in all_news.items() if date >= cutoff_date}
+    
+    _save("collected_news", all_news)
+
+def get_collected_news(limit=None, date=None):
+    """خواندن اخبار جمع‌آوری‌شده"""
+    all_news = _load("collected_news", {})
+    
+    if date is None:
+        date = datetime.utcnow().date().isoformat()
+    
+    news = all_news.get(date, [])
+    
+    if limit:
+        return news[:limit]
+    return news
+
+def get_all_collected_news(days=7):
+    """دریافت تمام اخبار چند روز اخیر"""
+    all_news = _load("collected_news", {})
+    
+    result = []
+    for date in sorted(all_news.keys(), reverse=True)[:days]:
+        result.extend(all_news[date])
+    
+    return result
