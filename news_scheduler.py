@@ -5,25 +5,22 @@
 
 import asyncio
 import os
-import html
-import re
 from datetime import datetime, time as dtime, timedelta
 import pytz
 import logging
+
 from telegram import Bot
 from telegram.error import TelegramError, RetryAfter
 
 from news_fetcher import fetch_all_news
+from news_ranker import rank_news
 from translation import translate_title
 from category import classify_category
-from news_ranker import rank_news
-from trends import save_topic, find_daily_trends, format_trends_message, save_daily_news
-from database import get_setting, set_setting, is_sent, mark_sent
+from database import get_setting, set_setting, save_collected_news
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-# 🔧 FIX: استفاده صحیح از os.getenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise RuntimeError("❌ BOT_TOKEN تنظیم نشده است")
@@ -35,267 +32,303 @@ TEHRAN_TZ = pytz.timezone('Asia/Tehran')
 
 
 def now_tehran():
+    """دریافت زمان فعلی تهران"""
     return datetime.now(TEHRAN_TZ)
 
 
 def get_fetch_interval():
-    # 🔧 FIX: تبدیل به int بعد از دریافت string
-    return int(get_setting("news_fetch_interval_hours", "3"))
+    """دریافت بازه جمع‌آوری از تنظیمات (پیش‌فرض 3 ساعت)"""
+    return int(get_setting("news_fetch_interval_hours", 3))
 
 
 def get_trend_time():
-    # 🔧 FIX: تبدیل به int بعد از دریافت string
-    trend_hour = int(get_setting("trend_hour", "23"))
-    trend_minute = int(get_setting("trend_minute", "55"))
+    """دریافت زمان ارسال ترند (پیش‌فرض 23:55 به وقت تهران)"""
+    trend_hour = int(get_setting("trend_hour", 23))
+    trend_minute = int(get_setting("trend_minute", 55))
     return dtime(trend_hour, trend_minute)
 
 
 def get_min_trend_sources():
-    # 🔧 FIX: تبدیل به int بعد از دریافت string
-    return int(get_setting("min_trend_sources", "2"))
-
-
-def clean_text(text):
-    """
-    🔧 FIX: تمیز کردن متن از HTML entities و کاراکترهای مزاحم
-    """
-    if not text:
-        return ""
-    
-    # Decode HTML entities
-    text = html.unescape(text)
-    
-    # حذف تگ‌های HTML
-    text = re.sub(r'<[^>]+>', '', text)
-    
-    # حذف فضای خالی اضافی
-    text = re.sub(r'\s+', ' ', text).strip()
-    
-    return text
-
-
-def is_valid_news(item):
-    """
-    🔧 FIX: بررسی اینکه آیتم یک خبر واقعی است یا لینک RSS
-    """
-    title = item.get('title', '').lower()
-    link = item.get('link', item.get('url', '')).lower()
-    
-    # فیلتر لینک‌های RSS
-    if '/feed' in link or '/rss' in link:
-        return False
-    
-    # فیلتر عناوین خالی یا خیلی کوتاه
-    if not title or len(title.strip()) < 10:
-        return False
-    
-    # فیلتر عناوین که فقط نام سایت هستن
-    invalid_titles = [
-        'latest news', 'آخرین اخبار', 'home', 'feed',
-        'rss', 'cinema', 'movies', 'news'
-    ]
-    if title.strip() in invalid_titles:
-        return False
-    
-    return True
+    """حداقل منابع برای ترند (پیش‌فرض 2)"""
+    return int(get_setting("min_trend_sources", 2))
 
 
 async def fetch_and_send_news():
+    """هر N ساعت یکبار اخبار جدید را جمع‌آوری و رتبه‌بندی و ارسال می‌کند."""
     logger.info("\n" + "="*60)
     logger.info("⏰ شروع جمع‌آوری اخبار...")
     logger.info(f"🕐 زمان تهران: {now_tehran().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info("="*60)
-
+    
+    # ذخیره زمان شروع
     start_time = now_tehran()
     set_setting("last_news_fetch", start_time.isoformat())
+    
     TARGET_CHAT_ID = get_setting("TARGET_CHAT_ID")
+
     if not TARGET_CHAT_ID:
-        logger.warning("⚠️  آیدی مقصد تنظیم نشده است.")
+        logger.warning("⚠️  آیدی مقصد تنظیم نشده است. لطفاً از پنل ادمین تنظیم کنید.")
+        logger.info("="*60 + "\n")
         return
+
     try:
         TARGET_CHAT_ID = int(TARGET_CHAT_ID)
     except ValueError:
-        logger.error("❌ TARGET_CHAT_ID باید عدد صحیح باشد.")
+        logger.error("❌ TARGET_CHAT_ID باید یک عدد صحیح باشد.")
+        logger.info("="*60 + "\n")
         return
 
-    min_importance = int(get_setting("min_importance", "1"))
-    logger.info(f"⭐ حداقل اهمیت: {min_importance}")
-
+    min_importance_str = get_setting("min_importance") or "1"
     try:
-        all_news = fetch_all_news()
-        if not all_news:
-            logger.info("📭 هیچ خبر جدیدی یافت نشد.")
-            return
+        min_importance = int(min_importance_str)
+    except ValueError:
+        min_importance = 1
 
-        # فیلتر کردن اخبار نامعتبر
-        valid_news = [item for item in all_news if is_valid_news(item)]
-        logger.info(f"✅ {len(valid_news)} خبر معتبر از {len(all_news)} آیتم")
+    # جمع‌آوری اخبار
+    all_news = fetch_all_news()
+    
+    if not all_news:
+        logger.info("📭 هیچ خبر جدیدی یافت نشد.")
+        logger.info("="*60 + "\n")
+        return
+    
+    # رتبه‌بندی
+    ranked = rank_news(all_news, min_importance=min_importance)
 
-        if not valid_news:
-            logger.info("📭 هیچ خبر معتبری یافت نشد.")
-            return
+    if not ranked:
+        logger.info(f"📭 هیچ خبری با اهمیت حداقل {min_importance} پیدا نشد.")
+        logger.info("="*60 + "\n")
+        return
 
-        # رتبه‌بندی اخبار بر اساس اهمیت
-        ranked_news = rank_news(valid_news, min_importance=min_importance)
-        logger.info(f"🎯 {len(ranked_news)} خبر با اهمیت حداقل {min_importance}")
+    # ذخیره اخبار جمع‌آوری شده
+    save_collected_news(ranked)
+    logger.info(f"💾 {len(ranked)} خبر در فایل ذخیره شد")
 
-        if not ranked_news:
-            logger.info(f"📭 هیچ خبری با اهمیت حداقل {min_importance} یافت نشد.")
-            return
+    logger.info(f"📨 در حال ارسال {len(ranked)} خبر به کانال {TARGET_CHAT_ID}...")
 
-        sent_count = 0
-        skipped_count = 0
+    sent_count = 0
+    today = now_tehran().date().isoformat()
+    
+    # import برای ذخیره ترند
+    from database import save_topic
+    
+    for item in ranked:
+        # ترجمه عنوان و خلاصه
+        title_fa = translate_title(item['title'])
+        summary_fa = translate_title(item.get('summary', '')[:300]) if item.get('summary') else ""
         
-        for item in ranked_news:
-            # بررسی تکراری نبودن
-            link = item.get('link', item.get('url', ''))
-            if not link:
-                logger.warning(f"⚠️ خبر بدون لینک: {item.get('title', 'بدون عنوان')}")
-                continue
+        # دسته‌بندی
+        category = classify_category(item['title'], item.get('summary', ''))
+        
+        # تبدیل دسته به هشتگ قابل جستجو
+        category_hashtag = category.split()[1] if ' ' in category else category
+        category_hashtag = f"#{category_hashtag}"
+        
+        # ایموجی اهمیت
+        importance_emoji = {
+            3: "🔥🔥🔥",
+            2: "⭐⭐",
+            1: "⭐",
+            0: "•"
+        }.get(item.get('importance', 1), "⭐")
+        
+        # ساخت پیام
+        msg = (
+            f"{category} {category_hashtag}\n\n"
+            f"*{title_fa}*\n\n"
+            f"{summary_fa}\n\n"
+            f"🔗 [خبر اصلی]({item['link']})\n"
+            f"{importance_emoji} اهمیت: {item.get('importance', 1)}/3"
+        )
+        
+        try:
+            await bot.send_message(
+                chat_id=TARGET_CHAT_ID,
+                text=msg,
+                parse_mode="Markdown",
+                disable_web_page_preview=False,
+            )
+            sent_count += 1
             
-            # 🔧 FIX: چک کردن ارسال قبلی
-            news_id = str(hash(link))
-            if is_sent(news_id):
-                skipped_count += 1
-                continue
-            
-            # تمیز کردن متن‌ها
-            title_clean = clean_text(item['title'])
-            summary_clean = clean_text(item.get('summary', '')[:300])
-            
-            # ترجمه
-            title_fa = translate_title(title_clean)
-            summary_fa = translate_title(summary_clean) if summary_clean else ""
-            
-            # دسته‌بندی
-            category = classify_category(title_clean, summary_clean)
-            category_hashtag = f"#{category.split()[1]}" if ' ' in category else f"#{category}"
-            
-            # ایموجی اهمیت
-            importance = item.get('importance', 1)
-            importance_emoji = {3:"🔥🔥🔥", 2:"⭐⭐", 1:"⭐", 0:"•"}.get(importance, "⭐")
-            
-            msg = (
-                f"{category} {category_hashtag}\n\n"
-                f"*{title_fa}*\n\n"
-                f"{summary_fa}\n\n"
-                f"🔗 [خبر اصلی]({link})\n"
-                f"{importance_emoji} اهمیت: {importance}/3"
+            # ذخیره برای ترند
+            save_topic(
+                topic=item['title'],
+                link=item['link'],
+                source=item.get('source', 'unknown'),
+                date=today
             )
             
+            logger.info(f"✅ ارسال شد: {title_fa[:40]}...")
+            await asyncio.sleep(3)  # تاخیر برای جلوگیری از Flood
+            
+        except RetryAfter as e:
+            logger.warning(f"⏱️  Flood control: صبر {e.retry_after} ثانیه...")
+            await asyncio.sleep(e.retry_after + 1)
+            
+            # تلاش مجدد
             try:
                 await bot.send_message(
                     chat_id=TARGET_CHAT_ID,
                     text=msg,
                     parse_mode="Markdown",
-                    disable_web_page_preview=False
+                    disable_web_page_preview=False,
                 )
-                
-                # 🔧 FIX: ثبت ارسال شده
-                mark_sent(news_id)
                 sent_count += 1
+                save_topic(
+                    topic=item['title'],
+                    link=item['link'],
+                    source=item.get('source', 'unknown'),
+                    date=today
+                )
+                logger.info(f"✅ ارسال شد (تلاش دوم): {title_fa[:40]}...")
+            except Exception as e2:
+                logger.error(f"❌ خطا در تلاش دوم: {e2}")
                 
-                # 🔧 FIX: ذخیره خبر در فایل روزانه برای تحلیل ترند
-                save_daily_news(item)
-                
-                # ذخیره در ترندها
-                save_topic(title_clean, link, item.get('source','unknown'))
-                
-                logger.info(f"✅ ارسال شد: {title_fa[:40]}... (اهمیت: {importance})")
-                await asyncio.sleep(2)
-                
-            except RetryAfter as e:
-                logger.warning(f"⏱️ Flood control: صبر {e.retry_after} ثانیه...")
-                await asyncio.sleep(e.retry_after + 1)
-            except TelegramError as e:
-                logger.error(f"❌ خطا در ارسال خبر: {e}")
-            except Exception as e:
-                logger.error(f"❌ خطای غیرمنتظره: {e}")
+        except TelegramError as e:
+            logger.error(f"❌ خطا در ارسال خبر: {e}")
 
-        logger.info(f"✅ {sent_count} خبر ارسال شد | {skipped_count} خبر تکراری رد شد")
-        set_setting("last_news_send", now_tehran().isoformat())
-        logger.info("="*60 + "\n")
-        
-    except Exception as e:
-        logger.error(f"❌ خطای کلی در fetch_and_send_news: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
+    logger.info(f"✅ {sent_count} خبر با موفقیت ارسال شد.")
+    
+    # ذخیره زمان ارسال
+    set_setting("last_news_send", now_tehran().isoformat())
+    logger.info("="*60 + "\n")
 
 
 async def send_daily_trend():
+    """یک بار در روز ترند روزانه سینما را ارسال می‌کند."""
     logger.info("\n" + "="*60)
     logger.info("📊 شروع ارسال ترند روزانه...")
+    logger.info(f"🕐 زمان تهران: {now_tehran().strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info("="*60)
+    
     TARGET_CHAT_ID = get_setting("TARGET_CHAT_ID")
+
     if not TARGET_CHAT_ID:
         logger.warning("⚠️  آیدی مقصد تنظیم نشده است.")
+        logger.info("="*60 + "\n")
         return
+
     try:
         TARGET_CHAT_ID = int(TARGET_CHAT_ID)
     except ValueError:
-        logger.error("❌ TARGET_CHAT_ID باید عدد صحیح باشد.")
+        logger.error("❌ TARGET_CHAT_ID باید یک عدد صحیح باشد.")
+        logger.info("="*60 + "\n")
         return
 
+    # دریافت حداقل منابع از تنظیمات
     min_sources = get_min_trend_sources()
-    trends = find_daily_trends(min_sources=min_sources)
-    trend_message = format_trends_message(trends)
+    
+    # تاریخ امروز به وقت تهران
+    today = now_tehran().date().isoformat()
+    
+    # دریافت ترندها از database
+    from database import daily_trends
+    trends = daily_trends(today)
 
-    if not trend_message:
+    if not trends:
         logger.info("📭 ترند روزانه خالی است، ارسال نشد.")
+        logger.info("="*60 + "\n")
         return
+
+    # ساخت پیام ترند
+    msg = "📈 *ترندهای امروز سینما*\n\n"
+    msg += f"📅 {today}\n\n"
+    
+    for i, trend in enumerate(trends[:10], 1):
+        emoji = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}️⃣"
+        
+        msg += f"{emoji} *{trend['topic'][:80]}*\n"
+        msg += f"   📰 منابع: {', '.join(trend['sources'][:3])}\n"
+        
+        if len(trend['sources']) > 3:
+            msg += f"   ➕ و {len(trend['sources']) - 3} منبع دیگر\n"
+        
+        if trend['links'] and trend['links'][0]:
+            msg += f"   🔗 [مشاهده]({trend['links'][0]})\n"
+        
+        msg += "\n"
+    
+    msg += "━━━━━━━━━━━━━━━━━\n"
+    msg += f"🔥 {len(trends)} ترند فعال\n"
+    msg += f"⏰ {now_tehran().strftime('%H:%M')}"
 
     try:
         await bot.send_message(
             chat_id=TARGET_CHAT_ID,
-            text=trend_message,
-            parse_mode="Markdown",
-            disable_web_page_preview=True
+            text=msg,
+            parse_mode='Markdown',
+            disable_web_page_preview=True,
         )
         logger.info("✅ ترند روزانه ارسال شد.")
         set_setting("last_trend_send", now_tehran().isoformat())
     except TelegramError as e:
         logger.error(f"❌ خطا در ارسال ترند: {e}")
-
+    
     logger.info("="*60 + "\n")
 
 
 async def schedule_daily_trend():
+    """زمان‌بندی دقیق ارسال ترند روزانه در ساعت مشخص (به وقت تهران)."""
     while True:
-        try:
-            trend_time = get_trend_time()
-            now = now_tehran()
-            target_time = TEHRAN_TZ.localize(datetime.combine(now.date(), trend_time))
-            if now >= target_time:
-                target_time += timedelta(days=1)
-            wait_seconds = (target_time - now).total_seconds()
-            set_setting("next_trend_time", target_time.isoformat())
-            logger.info(f"⏰ زمان باقی‌مانده تا ارسال ترند: {wait_seconds/3600:.1f} ساعت")
-            await asyncio.sleep(wait_seconds)
-            await send_daily_trend()
-        except Exception as e:
-            logger.error(f"❌ خطا در schedule_daily_trend: {e}")
-            await asyncio.sleep(3600)
+        trend_time = get_trend_time()
+        now = now_tehran()
+        
+        # ساخت datetime با timezone تهران
+        target_time = TEHRAN_TZ.localize(
+            datetime.combine(now.date(), trend_time)
+        )
+
+        if now >= target_time:
+            # اگر زمان گذشته، برای فردا تنظیم کن
+            target_time += timedelta(days=1)
+
+        wait_seconds = (target_time - now).total_seconds()
+        
+        # ذخیره زمان بعدی
+        set_setting("next_trend_time", target_time.isoformat())
+        
+        hours_left = wait_seconds / 3600
+        logger.info(f"⏰ زمان باقی‌مانده تا ارسال ترند: {hours_left:.1f} ساعت")
+        logger.info(f"📅 ترند بعدی: {target_time.strftime('%Y-%m-%d %H:%M')} (تهران)")
+
+        await asyncio.sleep(wait_seconds)
+        await send_daily_trend()
 
 
 async def schedule_news_fetching():
+    """زمان‌بندی دوره‌ای دریافت اخبار."""
     while True:
-        try:
-            await fetch_and_send_news()
-            interval_hours = get_fetch_interval()
-            next_fetch = now_tehran() + timedelta(hours=interval_hours)
-            set_setting("next_news_fetch", next_fetch.isoformat())
-            logger.info(f"😴 خواب به مدت {interval_hours} ساعت...")
-            await asyncio.sleep(interval_hours * 3600)
-        except Exception as e:
-            logger.error(f"❌ خطا در schedule_news_fetching: {e}")
-            await asyncio.sleep(3600)
+        await fetch_and_send_news()
+        
+        # دریافت بازه از تنظیمات
+        interval_hours = get_fetch_interval()
+        
+        # محاسبه زمان بعدی (به وقت تهران)
+        next_fetch = now_tehran() + timedelta(hours=interval_hours)
+        set_setting("next_news_fetch", next_fetch.isoformat())
+        
+        logger.info(f"😴 خواب به مدت {interval_hours} ساعت...")
+        logger.info(f"📅 دریافت بعدی: {next_fetch.strftime('%Y-%m-%d %H:%M')} (تهران)\n")
+        
+        await asyncio.sleep(interval_hours * 3600)
 
 
 async def run_scheduler():
+    """اجرای همزمان دو وظیفه."""
     logger.info("\n" + "="*60)
     logger.info("🤖 سرویس خبررسانی خودکار سینما")
     logger.info(f"🌍 Timezone: تهران (UTC+3:30)")
     logger.info(f"🕐 زمان فعلی: {now_tehran().strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info("="*60)
+    
+    interval_hours = get_fetch_interval()
+    trend_time = get_trend_time()
+    
+    logger.info(f"⏰ دریافت اخبار: هر {interval_hours} ساعت")
+    logger.info(f"📊 ارسال ترندها: روزانه ساعت {trend_time.strftime('%H:%M')} (تهران)")
+    logger.info("🛑 برای توقف: CTRL+C")
     logger.info("="*60 + "\n")
+    
     await asyncio.gather(
         schedule_news_fetching(),
         schedule_daily_trend(),
@@ -303,13 +336,15 @@ async def run_scheduler():
 
 
 def start_scheduler():
+    """تابع ورودی برای استفاده در Thread - برای main.py"""
     try:
         asyncio.run(run_scheduler())
     except KeyboardInterrupt:
-        logger.info("🛑 سرویس scheduler متوقف شد.")
+        logger.info("\n🛑 سرویس scheduler متوقف شد.")
     except Exception as e:
-        logger.error(f"❌ خطا در scheduler: {e}")
+        logger.error(f"\n❌ خطا در scheduler: {e}")
 
 
+# اجرای مستقیم
 if __name__ == "__main__":
     start_scheduler()
