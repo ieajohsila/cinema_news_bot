@@ -2,16 +2,16 @@
 
 CATEGORIES = {
     "🎬 فیلم": [
-        "film", "movie", "cinema", "director"
+        "film", "movie", "cinema", "director", "screenplay", "plot"
     ],
     "📺 سریال": [
-        "tv", "series", "episode", "season"
+        "tv", "series", "episode", "season", "streaming", "netflix", "hbo"
     ],
     "🎭 جشنواره و جوایز": [
-        "oscar", "cannes", "festival", "award", "golden globe"
+        "oscar", "cannes", "festival", "award", "golden globe", "nomination", "winner"
     ],
     "👤 بازیگران و عوامل": [
-        "actor", "actress", "director", "producer", "cast"
+        "actor", "actress", "director", "producer", "cast", "star", "celebrity"
     ]
 }
 
@@ -25,5 +25,6 @@ def classify_category(title, summary):
         for keyword in keywords:
             if keyword in text:
                 return category
+    
     # اگر هیچ کلمه‌ای پیدا نشد، پیش‌فرض فیلم
     return "🎬 فیلم"
