@@ -1,45 +1,45 @@
 """
-اسکریپت مقداردهی اولیه
-این فایل منابع پیش‌فرض را به database اضافه می‌کند
+Initial setup script
+This file adds default sources to the database
 """
 
 from database import add_rss_source, add_scrape_source, get_rss_sources, get_scrape_sources
 from default_sources import DEFAULT_RSS_SOURCES, DEFAULT_SCRAPE_SITES
 
 def initialize_sources():
-    """افزودن منابع پیش‌فرض به database"""
+    """Add default sources to database"""
     print("\n" + "="*60)
-    print("🔧 مقداردهی اولیه منابع...")
+    print("Initial setup of sources...")
     print("="*60 + "\n")
     
-    # بررسی منابع فعلی
+    # Check current sources
     current_rss = get_rss_sources()
     current_scrape = get_scrape_sources()
     
-    print(f"📊 وضعیت فعلی:")
-    print(f"   RSS: {len(current_rss)} منبع")
-    print(f"   Scrape: {len(current_scrape)} منبع\n")
+    print(f"Current status:")
+    print(f"   RSS: {len(current_rss)} sources")
+    print(f"   Scrape: {len(current_scrape)} sources\n")
     
-    # افزودن RSS
+    # Add RSS
     added_rss = 0
     for url in DEFAULT_RSS_SOURCES:
         if url not in current_rss:
             add_rss_source(url)
             added_rss += 1
-            print(f"✅ RSS اضافه شد: {url}")
+            print(f"Added RSS: {url}")
     
-    # افزودن Scrape
+    # Add Scrape
     added_scrape = 0
     for url in DEFAULT_SCRAPE_SITES:
         if url not in current_scrape:
             add_scrape_source(url)
             added_scrape += 1
-            print(f"✅ Scrape اضافه شد: {url}")
+            print(f"Added Scrape: {url}")
     
     print("\n" + "="*60)
-    print(f"✅ مقداردهی کامل شد!")
-    print(f"   📰 {added_rss} RSS جدید اضافه شد")
-    print(f"   🕷️  {added_scrape} Scrape جدید اضافه شد")
+    print(f"Setup complete!")
+    print(f"   {added_rss} new RSS sources added")
+    print(f"   {added_scrape} new Scrape sources added")
     print("="*60 + "\n")
 
 
