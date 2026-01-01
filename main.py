@@ -1,16 +1,20 @@
 """
-🎬 ربات خبری سینما - نسخه نهایی
+🎬 ربات خبری سینما - نسخه امن و همزمان
+این نسخه admin_bot و news_scheduler را در یک event loop اجرا می‌کند
+و healthcheck، cleanup و flood control را مدیریت می‌کند
 """
 
 import os
 import asyncio
 import logging
 from threading import Thread
-import time
 
 from telegram import Bot
 from telegram.error import TelegramError
 
+# ==============================
+# Logging
+# ==============================
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -33,12 +37,23 @@ async def cleanup_bot():
         await bot.delete_webhook(drop_pending_updates=True)
         logger.info("✅ Webhook حذف شد")
 
+        updates = await bot.get_updates(timeout=2)
+        if updates:
+            last_id = updates[-1].update_id
+            await bot.get_updates(offset=last_id + 1, timeout=2)
+            logger.info(f"✅ {len(updates)} pending update پاک شد")
+        else:
+            logger.info("✅ هیچ pending update وجود ندارد")
+
         me = await bot.get_me()
         logger.info(f"✅ اتصال موفق: @{me.username}")
         return True
 
-    except Exception as e:
+    except TelegramError as e:
         logger.error(f"❌ خطا در cleanup: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"❌ خطای غیرمنتظره: {e}")
         return False
 
 # ==============================
@@ -72,42 +87,29 @@ def start_healthcheck_server():
 # ==============================
 async def start_news_scheduler():
     try:
-        from news_scheduler import run_scheduler
-        logger.info("📰 شروع News Scheduler...")
-        await run_scheduler()
+        from news_scheduler import start_scheduler
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, start_scheduler)
+        logger.info("✅ News scheduler started")
     except ImportError as e:
         logger.error(f"❌ news_scheduler پیدا نشد: {e}")
     except Exception as e:
         logger.error(f"❌ خطا در اجرای news_scheduler: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
 
 # ==============================
-# اجرا کننده admin_bot (FIX)
+# اجرا کننده admin_bot
 # ==============================
-def start_admin_bot_thread():
-    """🔧 FIX: ایجاد event loop جدید برای thread"""
+async def start_admin_bot():
     try:
-        time.sleep(2)
-        
-        logger.info("🤖 شروع Admin Bot...")
-        
-        # 🔧 FIX: ایجاد event loop جدید
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
         from admin_bot import app as admin_app
-        
-        # اجرای در event loop جدید
-        admin_app.run_polling(
-            drop_pending_updates=True,
-            allowed_updates=['message', 'callback_query']
-        )
-        
+        await admin_app.initialize()
+        await admin_app.start()
+        await admin_app.updater.start_polling(drop_pending_updates=True)
+        logger.info("✅ Admin bot started")
+    except ImportError as e:
+        logger.error(f"❌ admin_bot پیدا نشد: {e}")
     except Exception as e:
         logger.error(f"❌ خطا در اجرای admin_bot: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
 
 # ==============================
 # Main Async
@@ -124,10 +126,10 @@ async def main_async():
     print("✅ BOT_TOKEN یافت شد")
 
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-    if GEMINI_API_KEY:
-        print("✅ GEMINI_API_KEY یافت شد")
+    if not GEMINI_API_KEY:
+        print("⚠️ GEMINI_API_KEY تنظیم نشده - ترجمه غیرفعال است")
     else:
-        print("⚠️ GEMINI_API_KEY تنظیم نشده")
+        print("✅ GEMINI_API_KEY یافت شد")
     
     TARGET_CHAT_ID = os.getenv("TARGET_CHAT_ID")
     if TARGET_CHAT_ID:
@@ -136,37 +138,36 @@ async def main_async():
         print("⚠️ TARGET_CHAT_ID تنظیم نشده")
 
     print("\n🧹 پاکسازی و آماده‌سازی ربات...")
-    await cleanup_bot()
+    cleanup_success = await cleanup_bot()
+    if not cleanup_success:
+        print("⚠️ پاکسازی کامل نبود، ادامه می‌دهیم...")
 
     print("\n📋 سرویس‌های فعال:")
     print("  1️⃣ Admin Bot")
     print("  2️⃣ News Scheduler")
-    print("  3️⃣ Healthcheck Server")
+    print("  3️⃣ Healthcheck Server (8080)")
     print("\n🛑 خروج: CTRL+C\n")
 
-    # Healthcheck
-    Thread(target=start_healthcheck_server, daemon=True, name="HealthCheck").start()
-    
-    # Admin Bot
-    admin_thread = Thread(target=start_admin_bot_thread, daemon=True, name="AdminBot")
-    admin_thread.start()
-    logger.info("✅ Admin Bot thread started")
-    
-    await asyncio.sleep(3)
+    # Healthcheck server در thread جدا
+    Thread(target=start_healthcheck_server, daemon=True).start()
 
-    # News Scheduler
-    try:
-        await start_news_scheduler()
-    except Exception as e:
-        logger.error(f"❌ خطا: {e}", exc_info=True)
+    # اجرای همزمان admin_bot و news_scheduler
+    await asyncio.gather(
+        start_admin_bot(),
+        start_news_scheduler()
+    )
 
+# ==============================
+# Entry Point
+# ==============================
 def main():
-    try:
-        asyncio.run(main_async())
-    except KeyboardInterrupt:
-        print("\n\n👋 ربات متوقف شد")
-    except Exception as e:
-        logger.error("❌ خطای غیرمنتظره", exc_info=True)
+    asyncio.run(main_async())
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n\n👋 ربات متوقف شد. خداحافظ!")
+    except Exception as e:
+        logger.error("❌ خطای غیرمنتظره", exc_info=True)
+        print(f"\n❌ خطای غیرمنتظره: {e}")
