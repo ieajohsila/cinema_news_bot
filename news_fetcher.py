@@ -1,5 +1,9 @@
 """
 ماژول جمع‌آوری اخبار از منابع RSS و Scraping
+
+تغییرات مهم در این نسخه:
+- mark_sent() حذف شد - فقط بعد از ارسال موفق در news_scheduler صدا زده می‌شود
+- فقط is_sent() برای چک کردن استفاده می‌شود
 """
 
 import feedparser
@@ -8,7 +12,7 @@ from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 import logging
 
-from database import get_rss_sources, get_scrape_sources, is_sent, mark_sent
+from database import get_rss_sources, get_scrape_sources, is_sent
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -24,7 +28,7 @@ def fetch_rss_feed(url):
         for entry in feed.entries[:15]:  # فقط 15 خبر آخر
             link = entry.get("link", "")
             
-            # چک کردن اینکه قبلاً دیده شده یا نه
+            # 🔧 FIX: فقط چک کردن، بدون mark کردن
             if not link or is_sent(link):
                 continue
             
@@ -58,8 +62,8 @@ def fetch_rss_feed(url):
                 "published": pub_date.isoformat(),
             })
             
-            # علامت‌گذاری به عنوان دیده شده
-            mark_sent(link)
+            # 🔧 FIX: حذف mark_sent از اینجا
+            # mark_sent باید فقط بعد از ارسال موفق صدا زده شود
         
         logger.info(f"✅ RSS: {len(articles)} خبر جدید از {url[:30]}")
         return articles
@@ -103,7 +107,7 @@ def fetch_scraped_page(url):
             if href in seen_in_this_page:
                 continue
             
-            # چک کردن تکراری بودن در دیتابیس
+            # 🔧 FIX: فقط چک کردن، بدون mark کردن
             if is_sent(href):
                 continue
             
@@ -128,7 +132,7 @@ def fetch_scraped_page(url):
             })
             
             seen_in_this_page.add(href)
-            mark_sent(href)
+            # 🔧 FIX: حذف mark_sent از اینجا
             
             # محدودیت تعداد اخبار از هر صفحه
             if len(articles) >= 10:
@@ -190,7 +194,19 @@ def fetch_all_news():
 if __name__ == "__main__":
     # تست
     print("🧪 تست ماژول news_fetcher...\n")
+    
+    # نمایش تعداد منابع
+    rss = get_rss_sources()
+    scrape = get_scrape_sources()
+    print(f"📰 منابع RSS: {len(rss)}")
+    print(f"🕷️ منابع Scraping: {len(scrape)}\n")
+    
+    # جمع‌آوری اخبار
     news = fetch_all_news()
-    print(f"\n📊 تعداد اخبار: {len(news)}")
+    print(f"\n📊 تعداد اخبار جمع‌آوری شده: {len(news)}")
+    
     if news:
         print(f"📰 اولین خبر: {news[0]['title'][:60]}...")
+        print(f"🔗 لینک: {news[0]['link'][:60]}...")
+    else:
+        print("⚠️ هیچ خبر جدیدی یافت نشد (ممکن است همه قبلاً ارسال شده باشند)")
