@@ -1,1 +1,53 @@
-{}
+#!/usr/bin/env python3
+"""
+اسکریپت سریع برای ریست کردن فایل topics.json
+"""
+
+import json
+import os
+
+TOPICS_FILE = "data/topics.json"
+
+def fix_topics_file():
+    """تبدیل topics.json از dict به list"""
+    
+    print("🔧 شروع اصلاح فایل topics.json...")
+    
+    # ساخت پوشه data اگر وجود نداشت
+    os.makedirs("data", exist_ok=True)
+    
+    # بررسی وضعیت فعلی
+    if os.path.exists(TOPICS_FILE):
+        try:
+            with open(TOPICS_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            print(f"📄 نوع فعلی: {type(data).__name__}")
+            
+            if isinstance(data, dict):
+                print("⚠️  فایل به اشتباه dict است، تبدیل به list...")
+                # ذخیره به عنوان لیست خالی
+                with open(TOPICS_FILE, 'w', encoding='utf-8') as f:
+                    json.dump([], f, ensure_ascii=False, indent=2)
+                print("✅ فایل به list تبدیل شد")
+            else:
+                print("✅ فایل از قبل list است")
+        
+        except Exception as e:
+            print(f"❌ خطا در خواندن فایل: {e}")
+            print("🔄 ایجاد فایل جدید...")
+            with open(TOPICS_FILE, 'w', encoding='utf-8') as f:
+                json.dump([], f, ensure_ascii=False, indent=2)
+            print("✅ فایل جدید ایجاد شد")
+    else:
+        print("📝 فایل وجود ندارد، ایجاد می‌شود...")
+        with open(TOPICS_FILE, 'w', encoding='utf-8') as f:
+            json.dump([], f, ensure_ascii=False, indent=2)
+        print("✅ فایل ایجاد شد")
+    
+    print("\n✨ عملیات با موفقیت انجام شد!")
+    print(f"📂 مسیر: {os.path.abspath(TOPICS_FILE)}")
+
+
+if __name__ == "__main__":
+    fix_topics_file()
