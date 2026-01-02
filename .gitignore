@@ -11,11 +11,15 @@ ENV/
 dist/
 build/
 
-# Database files
-data/
-*.json
-*.db
-*.sqlite
+# Database files (فقط در local)
+# در Railway این فایل‌ها خودکار ساخته می‌شوند
+data/*.json
+!data/.gitkeep
+
+# اما در صورت نیاز می‌توانید این خط را uncomment کنید
+# تا فایل‌های اولیه push شوند:
+# !data/sources.json
+# !data/settings.json
 
 # Environment variables
 .env
@@ -36,3 +40,13 @@ Thumbs.db
 
 # Railway
 .railway/
+
+# Test files
+test_*.py
+*_test.py
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~
