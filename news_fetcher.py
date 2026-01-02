@@ -160,15 +160,25 @@ def fetch_all_news():
     rss_sources = get_rss_sources()
     logger.info(f"📰 تعداد منابع RSS: {len(rss_sources)}")
     for rss_url in rss_sources:
-        articles = fetch_rss_feed(rss_url)
-        all_articles.extend(articles)
+        try:
+            articles = fetch_rss_feed(rss_url)
+            if articles:  # فقط اگر خبر جدید داشت
+                all_articles.extend(articles)
+        except Exception as e:
+            logger.error(f"❌ خطا در پردازش RSS {rss_url[:30]}: {e}")
+            continue
     
     # دریافت از Scraping
     scrape_sources = get_scrape_sources()
     logger.info(f"🕷️  تعداد منابع Scraping: {len(scrape_sources)}")
     for scrape_url in scrape_sources:
-        articles = fetch_scraped_page(scrape_url)
-        all_articles.extend(articles)
+        try:
+            articles = fetch_scraped_page(scrape_url)
+            if articles:  # فقط اگر خبر جدید داشت
+                all_articles.extend(articles)
+        except Exception as e:
+            logger.error(f"❌ خطا در پردازش Scraping {scrape_url[:30]}: {e}")
+            continue
     
     logger.info("="*60)
     logger.info(f"✅ جمعاً {len(all_articles)} خبر جدید جمع‌آوری شد")
