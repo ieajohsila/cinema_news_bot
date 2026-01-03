@@ -27,7 +27,6 @@ from importance import (
     get_level_keywords,
     add_keyword,
     remove_keyword,
-    add_new_level,
 )
 from status_handler import get_status_message
 from news_fetcher import fetch_all_news
@@ -36,20 +35,14 @@ from translation import translate_title
 from category import classify_category
 from datetime import datetime
 
-ADMIN_ID = 81155585  # آیدی ادمین
+ADMIN_ID = 81155585
 
-# حالت‌های ورودی
 USER_STATE = {}
 
 # =========================
-# ابزار کمکی
+# منوی اصلی
 # =========================
-def is_admin(update: Update) -> bool:
-    return update.effective_user and update.effective_user.id == ADMIN_ID
-
-
 def get_main_menu_keyboard():
-    """دریافت کیبورد منوی اصلی"""
     return [
         [InlineKeyboardButton("📊 وضعیت ربات", callback_data="status")],
         [InlineKeyboardButton("📋 نمایش منابع", callback_data="list_sources")],
@@ -67,24 +60,12 @@ def get_main_menu_keyboard():
     ]
 
 # =========================
-# /start — پنل اصلی
+# ابزار کمکی
 # =========================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update):
-        await update.message.reply_text("⛔️ شما دسترسی به این ربات ندارید.")
-        return
-
-    keyboard = get_main_menu_keyboard()
-
-    await update.message.reply_text(
-        "🎬 *پنل مدیریت ربات خبری سینما*",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown"
-    )
-
+def is_admin(update: Update) -> bool:
+    return update.effective_user and update.effective_user.id == ADMIN_ID
 
 async def show_main_menu(query):
-    """نمایش منوی اصلی از callback"""
     keyboard = get_main_menu_keyboard()
     
     try:
@@ -100,6 +81,21 @@ async def show_main_menu(query):
             parse_mode="Markdown"
         )
 
+# =========================
+# /start
+# =========================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update):
+        await update.message.reply_text("⛔️ شما دسترسی به این ربات ندارید.")
+        return
+
+    keyboard = get_main_menu_keyboard()
+
+    await update.message.reply_text(
+        "🎬 *پنل مدیریت ربات خبری سینما*",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown"
+    )
 
 # =========================
 # وضعیت ربات
@@ -172,14 +168,12 @@ async def list_sources(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 # =========================
-# تست خبر واقعی
+# تست خبر
 # =========================
 async def send_test_news(query):
-    """جمع‌آوری اخبار جدید و نمایش یکی از آنها"""
     await query.answer("⏳ در حال جمع‌آوری اخبار...")
     
     try:
-        # جمع‌آوری اخبار
         await query.message.reply_text("🔄 در حال جمع‌آوری اخبار از منابع...")
         all_news = fetch_all_news()
         
@@ -187,7 +181,6 @@ async def send_test_news(query):
             await query.message.reply_text("❌ هیچ خبری یافت نشد.")
             return
         
-        # رتبه‌بندی
         min_importance = int(get_setting("min_importance", 1))
         ranked = rank_news(all_news, min_importance=min_importance)
         
@@ -195,20 +188,15 @@ async def send_test_news(query):
             await query.message.reply_text(f"❌ هیچ خبری با اهمیت حداقل {min_importance} پیدا نشد.")
             return
         
-        # ذخیره اخبار
         save_collected_news(ranked)
         
-        # نمایش اولین خبر
         n = ranked[0]
         
-        # ترجمه
         title_fa = translate_title(n['title'])
         summary_fa = translate_title(n.get('summary', '')[:300]) if n.get('summary') else ""
         
-        # دسته‌بندی
         category = classify_category(n['title'], n.get('summary', ''))
         
-        # ایموجی اهمیت
         importance_emoji = {
             3: "🔥🔥🔥",
             2: "⭐⭐",
@@ -230,16 +218,13 @@ async def send_test_news(query):
     except Exception as e:
         await query.message.reply_text(f"❌ خطا: {str(e)}")
 
-
 # =========================
-# تست ترند واقعی
+# تست ترند
 # =========================
 async def send_test_trends(query):
-    """محاسبه و نمایش ترندهای واقعی از اخبار امروز"""
     await query.answer("⏳ در حال تحلیل ترندها...")
     
     try:
-        # دریافت اخبار امروز
         today = datetime.utcnow().date().isoformat()
         trends = daily_trends(today)
         
@@ -272,9 +257,8 @@ async def send_test_trends(query):
     except Exception as e:
         await query.message.reply_text(f"❌ خطا: {str(e)}")
 
-
 # =========================
-# تنظیم کانال مقصد
+# تنظیم کانال
 # =========================
 async def set_target_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -289,7 +273,7 @@ async def set_target_channel(update: Update, context: ContextTypes.DEFAULT_TYPE)
     msg += "2. از @userinfobot استفاده کنید\n\n"
     msg += "مثال: `-1001234567890`"
     
-    keyboard = [[InlineKeyboardButton("❌ لغو", callback_data="back_to_main")]]
+    keyboard = [[InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_main")]]
     
     try:
         await query.edit_message_text(
@@ -304,9 +288,8 @@ async def set_target_channel(update: Update, context: ContextTypes.DEFAULT_TYPE)
             parse_mode="Markdown"
         )
 
-
 # =========================
-# تنظیم حداقل اهمیت
+# تنظیم اهمیت
 # =========================
 async def set_min_importance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -322,7 +305,7 @@ async def set_min_importance(update: Update, context: ContextTypes.DEFAULT_TYPE)
     msg += "3️⃣ فوری (breaking, Oscar)\n\n"
     msg += f"📊 سطح فعلی: {get_setting('min_importance', '1')}"
     
-    keyboard = [[InlineKeyboardButton("❌ لغو", callback_data="back_to_main")]]
+    keyboard = [[InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_main")]]
     
     try:
         await query.edit_message_text(
@@ -336,7 +319,6 @@ async def set_min_importance(update: Update, context: ContextTypes.DEFAULT_TYPE)
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
-
 
 # =========================
 # افزودن RSS
@@ -351,7 +333,7 @@ async def add_rss_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg += "لطفاً URL فید RSS را ارسال کنید.\n\n"
     msg += "مثال:\n`https://variety.com/feed/`"
     
-    keyboard = [[InlineKeyboardButton("❌ لغو", callback_data="back_to_main")]]
+    keyboard = [[InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_main")]]
     
     try:
         await query.edit_message_text(
@@ -365,7 +347,6 @@ async def add_rss_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
-
 
 # =========================
 # افزودن Scrape
@@ -380,7 +361,7 @@ async def add_scrape_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     msg += "لطفاً URL صفحه خبری را ارسال کنید.\n\n"
     msg += "مثال:\n`https://www.hollywoodreporter.com/news/`"
     
-    keyboard = [[InlineKeyboardButton("❌ لغو", callback_data="back_to_main")]]
+    keyboard = [[InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_main")]]
     
     try:
         await query.edit_message_text(
@@ -394,7 +375,6 @@ async def add_scrape_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
-
 
 # =========================
 # حذف منبع
@@ -433,7 +413,6 @@ async def remove_source_handler(update: Update, context: ContextTypes.DEFAULT_TY
             parse_mode="Markdown"
         )
 
-
 # =========================
 # مدیریت کلمات کلیدی
 # =========================
@@ -441,35 +420,152 @@ async def manage_keywords_handler(update: Update, context: ContextTypes.DEFAULT_
     query = update.callback_query
     await query.answer()
     
-    rules = get_all_rules()
-    
-    msg = "🔧 *مدیریت کلمات کلیدی*\n\n"
-    
-    for level in sorted(rules.keys(), key=lambda x: int(x)):
-        rule = rules[level]
-        msg += f"*سطح {level} ({rule['name']}):*\n"
-        msg += f"تعداد کلمات: {len(rule['keywords'])}\n\n"
-    
-    keyboard = [
-        [InlineKeyboardButton("➕ افزودن کلمه", callback_data="add_keyword")],
-        [InlineKeyboardButton("❌ حذف کلمه", callback_data="remove_keyword")],
-        [InlineKeyboardButton("📋 نمایش کلمات", callback_data="show_keywords")],
-        [InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_main")]
-    ]
+    try:
+        rules = get_all_rules()
+        
+        msg = "🔧 *مدیریت کلمات کلیدی*\n\n"
+        
+        for level in sorted(rules.keys(), key=lambda x: int(x)):
+            rule = rules[level]
+            msg += f"*سطح {level} ({rule['name']}):*\n"
+            msg += f"تعداد کلمات: {len(rule['keywords'])}\n\n"
+        
+        keyboard = [
+            [InlineKeyboardButton("📋 نمایش کلمات", callback_data="show_keywords")],
+            [InlineKeyboardButton("➕ افزودن کلمه", callback_data="add_keyword_choose_level")],
+            [InlineKeyboardButton("❌ حذف کلمه", callback_data="remove_keyword_choose_level")],
+            [InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_main")]
+        ]
+        
+        try:
+            await query.edit_message_text(
+                msg,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown"
+            )
+        except:
+            await query.message.reply_text(
+                msg,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown"
+            )
+    except Exception as e:
+        await query.message.reply_text(f"❌ خطا: {str(e)}")
+
+# =========================
+# نمایش کلمات
+# =========================
+async def show_keywords_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
     
     try:
-        await query.edit_message_text(
-            msg,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="Markdown"
-        )
-    except:
-        await query.message.reply_text(
-            msg,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="Markdown"
-        )
+        rules = get_all_rules()
+        
+        msg = "📋 *کلمات کلیدی اهمیت*\n\n"
+        
+        for level in sorted(rules.keys(), key=lambda x: int(x)):
+            rule = rules[level]
+            msg += f"*سطح {level} - {rule['name']}:*\n"
+            keywords = rule.get('keywords', [])
+            if keywords:
+                msg += ", ".join(keywords[:10])
+                if len(keywords) > 10:
+                    msg += f" ... (+{len(keywords)-10})"
+            else:
+                msg += "هیچ کلمه‌ای"
+            msg += "\n\n"
+        
+        keyboard = [[InlineKeyboardButton("🔙 بازگشت", callback_data="manage_keywords")]]
+        
+        try:
+            await query.edit_message_text(
+                msg,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown"
+            )
+        except:
+            await query.message.reply_text(
+                msg,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown"
+            )
+    except Exception as e:
+        await query.message.reply_text(f"❌ خطا: {str(e)}")
 
+# =========================
+# افزودن کلمه - انتخاب سطح
+# =========================
+async def add_keyword_choose_level(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        rules = get_all_rules()
+        
+        keyboard = []
+        for level in sorted(rules.keys(), key=lambda x: int(x)):
+            rule = rules[level]
+            keyboard.append([
+                InlineKeyboardButton(
+                    f"سطح {level} - {rule['name']}", 
+                    callback_data=f"add_kw_level:{level}"
+                )
+            ])
+        
+        keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data="manage_keywords")])
+        
+        try:
+            await query.edit_message_text(
+                "➕ *افزودن کلمه کلیدی*\n\nسطح مورد نظر را انتخاب کنید:",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown"
+            )
+        except:
+            await query.message.reply_text(
+                "➕ *افزودن کلمه کلیدی*\n\nسطح مورد نظر را انتخاب کنید:",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown"
+            )
+    except Exception as e:
+        await query.message.reply_text(f"❌ خطا: {str(e)}")
+
+# =========================
+# حذف کلمه - انتخاب سطح
+# =========================
+async def remove_keyword_choose_level(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        rules = get_all_rules()
+        
+        keyboard = []
+        for level in sorted(rules.keys(), key=lambda x: int(x)):
+            rule = rules[level]
+            keyboard.append([
+                InlineKeyboardButton(
+                    f"سطح {level} - {rule['name']}", 
+                    callback_data=f"remove_kw_level:{level}"
+                )
+            ])
+        
+        keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data="manage_keywords")])
+        
+        try:
+            await query.edit_message_text(
+                "❌ *حذف کلمه کلیدی*\n\nسطح مورد نظر را انتخاب کنید:",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown"
+            )
+        except:
+            await query.message.reply_text(
+                "❌ *حذف کلمه کلیدی*\n\nسطح مورد نظر را انتخاب کنید:",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown"
+            )
+    except Exception as e:
+        await query.message.reply_text(f"❌ خطا: {str(e)}")
 
 # =========================
 # تنظیمات زمان‌بندی
@@ -506,9 +602,8 @@ async def scheduling_settings_handler(update: Update, context: ContextTypes.DEFA
             parse_mode="Markdown"
         )
 
-
 # =========================
-# دریافت پیام‌های متنی
+# دریافت پیام متنی
 # =========================
 async def receive_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update):
@@ -524,7 +619,6 @@ async def receive_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             chat_id = int(text)
             set_setting("TARGET_CHAT_ID", str(chat_id))
             
-            # تست ارسال
             try:
                 await context.bot.send_message(
                     chat_id=chat_id,
@@ -573,10 +667,23 @@ async def receive_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             USER_STATE.pop(user_id, None)
         else:
             await update.message.reply_text("❌ URL باید با http شروع شود:")
-
+    
+    elif state and state.startswith("waiting_add_keyword:"):
+        level = state.split(":")[1]
+        keyword = text.lower().strip()
+        
+        if keyword:
+            success = add_keyword(int(level), keyword)
+            if success:
+                await update.message.reply_text(f"✅ کلمه '{keyword}' به سطح {level} اضافه شد.")
+            else:
+                await update.message.reply_text(f"⚠️ کلمه '{keyword}' قبلاً در سطح {level} وجود دارد.")
+            USER_STATE.pop(user_id, None)
+        else:
+            await update.message.reply_text("❌ کلمه نمی‌تواند خالی باشد:")
 
 # =========================
-# Callback دکمه‌ها
+# مدیریت Callback ها
 # =========================
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -621,6 +728,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "manage_keywords":
         await manage_keywords_handler(update, context)
     
+    elif data == "show_keywords":
+        await show_keywords_handler(update, context)
+    
+    elif data == "add_keyword_choose_level":
+        await add_keyword_choose_level(update, context)
+    
+    elif data == "remove_keyword_choose_level":
+        await remove_keyword_choose_level(update, context)
+    
     elif data == "scheduling_settings":
         await scheduling_settings_handler(update, context)
     
@@ -634,6 +750,81 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         url = data.replace("remove_scrape:", "")
         remove_scrape_source(url)
         await query.message.reply_text(f"✅ منبع Scraping حذف شد:\n`{url}`", parse_mode="Markdown")
+        await show_main_menu(query)
+    
+    elif data.startswith("add_kw_level:"):
+        level = data.replace("add_kw_level:", "")
+        USER_STATE[ADMIN_ID] = f"waiting_add_keyword:{level}"
+        
+        rules = get_all_rules()
+        rule_name = rules.get(level, {}).get('name', f'سطح {level}')
+        
+        keyboard = [[InlineKeyboardButton("🔙 بازگشت", callback_data="manage_keywords")]]
+        
+        try:
+            await query.edit_message_text(
+                f"➕ *افزودن کلمه به {rule_name}*\n\n"
+                f"کلمه کلیدی را ارسال کنید:\n\n"
+                f"مثال: `trailer` یا `تریلر`",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown"
+            )
+        except:
+            await query.message.reply_text(
+                f"➕ *افزودن کلمه به {rule_name}*\n\n"
+                f"کلمه کلیدی را ارسال کنید:\n\n"
+                f"مثال: `trailer` یا `تریلر`",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown"
+            )
+    
+    elif data.startswith("remove_kw_level:"):
+        level = data.replace("remove_kw_level:", "")
+        
+        try:
+            keywords = get_level_keywords(int(level))
+            
+            if not keywords:
+                await query.message.reply_text(f"⚠️ هیچ کلمه‌ای در سطح {level} وجود ندارد.")
+                return
+            
+            keyboard = []
+            for kw in keywords[:20]:  # محدود به 20 کلمه
+                keyboard.append([
+                    InlineKeyboardButton(
+                        f"❌ {kw}", 
+                        callback_data=f"delete_kw:{level}:{kw}"
+                    )
+                ])
+            
+            keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data="manage_keywords")])
+            
+            try:
+                await query.edit_message_text(
+                    f"❌ *حذف کلمه از سطح {level}*\n\nروی کلمه مورد نظر کلیک کنید:",
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode="Markdown"
+                )
+            except:
+                await query.message.reply_text(
+                    f"❌ *حذف کلمه از سطح {level}*\n\nروی کلمه مورد نظر کلیک کنید:",
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode="Markdown"
+                )
+        except Exception as e:
+            await query.message.reply_text(f"❌ خطا: {str(e)}")
+    
+    elif data.startswith("delete_kw:"):
+        parts = data.split(":", 2)
+        level = int(parts[1])
+        keyword = parts[2]
+        
+        success = remove_keyword(level, keyword)
+        if success:
+            await query.message.reply_text(f"✅ کلمه '{keyword}' از سطح {level} حذف شد.")
+        else:
+            await query.message.reply_text(f"❌ کلمه '{keyword}' یافت نشد.")
+        
         await show_main_menu(query)
 
 
